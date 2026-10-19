@@ -654,5 +654,90 @@ test('每日新增只分餐費與其他；通用餐費正常彙總、司機照�
   assert.equal(r.people[1].transport,0);assert.equal(r.people[1].total,633);assert.equal(r.total,1300);
   const restored=C.decode(C.encode(s));assert.equal(restored.days[0].expenses.at(-2).category,'meal');
   const old=C.createTrip(3,1);old.version=3;old.members.forEach((m,i)=>m.name='舊成員'+i);
-  assert.equal(C.decode(JSON.stringify(old)).version,4);assert.deepEqual(C.decode(JSON.stringify(old)).days,old.days);
+  assert.equal(C.decode(JSON.stringify(old)).version,C.VERSION);assert.deepEqual(C.decode(JSON.stringify(old)).days,old.days);
+});
+
+test('家庭代表4人與2人依6個實際人數分攤，三餐與其他各自獨立', () => {
+  const s=fixture(2,1);s.members[0].count=4;s.members[1].count=2;
+  const breakfast=fill(s,0,'breakfast','600',[0,1]),lunch=fill(s,0,'lunch','120',[1]),other=fill(s,0,'other','60',[0,1]);
+  assert.equal(json(shares(s,calc(s,0,breakfast))),json([4000,2000]));
+  assert.equal(calc(s,0,breakfast).participantCount,6);assert.equal(calc(s,0,breakfast).eligible.length,2);
+  assert.equal(json(shares(s,calc(s,0,lunch))),json([0,1200]));
+  assert.equal(json(shares(s,calc(s,0,other))),json([400,200]));
+});
+
+test('家庭尾差仍以實際每人0.1元依名單順序分，100元的2人家庭收66.7元', () => {
+  const s=fixture(2,1);s.members[0].count=2;
+  let e=fill(s,0,'dinner','100',[0,1]);assert.equal(json(shares(s,calc(s,0,e))),json([667,333]));
+  s.members[1].count=3;e.amount='0.7';assert.equal(json(shares(s,calc(s,0,e))),json([4,3]));
+  assert.equal(totalShares(calc(s,0,e)),7);
+});
+
+test('家庭代表當日司機只免本人1份，其他家人照付，餐費與停車不免', () => {
+  const s=drivenTrip(2,1);s.members[0].count=4;s.members[1].count=2;
+  const fuel=fill(s,0,'fuel','500',[0,1]),meal=fill(s,0,'lunch','600',[0,1]),parking=fill(s,0,'parking','600',[0,1]);
+  assert.equal(json(shares(s,calc(s,0,fuel))),json([3000,2000]));assert.equal(calc(s,0,fuel).participantCount,5);
+  assert.equal(json(shares(s,calc(s,0,meal))),json([4000,2000]));assert.equal(json(shares(s,calc(s,0,parking))),json([4000,2000]));
+});
+
+test('整趟家庭人天：4人搭4天為16人天，2人搭2天為4人天', () => {
+  const s=drivenTrip(3,4);s.members[1].count=4;s.members[2].count=2;
+  const e=tripCar(s,'600',[[0,1,2],[0,1,2],[0,1],[0,1]]),r=C.calculateTripExpense(s,e);
+  assert.equal(json(shares(s,r)),json([0,4800,1200]));assert.equal(r.billablePersonDays[s.members[1].id],16);
+  assert.equal(r.billablePersonDays[s.members[2].id],4);assert.equal(r.billableDays[s.members[1].id],4);
+  assert.equal(r.participantCount,6);assert.equal(r.days.reduce((n,d)=>n+d.allocated,0),6000);
+});
+
+test('家庭輪替司機逐日只扣1人，人天和逐日分配使用當天剩餘人數', () => {
+  const s=drivenTrip(2,2);s.members[0].count=4;s.members[1].count=2;s.days[1].drivers=[s.members[1].id];
+  const e=tripCar(s,'1000',[[0,1],[0,1]]),r=C.calculateTripExpense(s,e);
+  assert.equal(json(shares(s,r)),json([7000,3000]));assert.equal(r.billablePersonDays[s.members[0].id],7);
+  assert.equal(r.billablePersonDays[s.members[1].id],3);
+  assert.equal(json(r.days.map(d=>s.members.map(m=>d.shares[m.id]))),json([[3000,2000],[4000,1000]]));
+  e.method='day-average';assert.equal(json(shares(s,C.calculateTripExpense(s,e))),json([7000,3000]));
+});
+
+test('家庭交通自理整組排除，空白姓名即使代表100人也不計；改名與改人數保留ID', () => {
+  const s=drivenTrip(4,2);s.members[1].count=4;s.members[2].count=2;s.members[2].excludeTransport=true;s.members[3].name=' ';s.members[3].count=100;
+  const e=tripCar(s,'600',[[0,1,2,3],[0,1,2,3]]),r=C.calculateTripExpense(s,e);
+  assert.equal(json(shares(s,r)),json([0,6000,0,0]));assert.equal(r.billablePersonDays[s.members[1].id],8);
+  const before=JSON.stringify(e);s.members[1].count=2;s.members[1].name='改名家庭';
+  assert.equal(JSON.stringify(e),before);assert.equal(C.calculateTripExpense(s,e).billablePersonDays[s.members[1].id],4);
+  const meal=fill(s,0,'dinner','700',[0,1,2,3]);assert.equal(calc(s,0,meal).participantCount,5);
+});
+
+test('家庭的代墊、已繳款、加購與其他加減是實際總額，不隨代表人數倍乘', () => {
+  const s=fixture(2,1);s.members[0].count=4;s.members[1].count=2;
+  fill(s,0,'dinner','600',[0,1],0);ledger(s,0,'charge','30',1);ledger(s,0,'payment','100');ledger(s,0,'adjustment','10');
+  const p=C.summarize(s).people[0];assert.equal(p.meals,4000);assert.equal(p.personal,300);assert.equal(p.adjustment,100);
+  assert.equal(p.advanced,6000);assert.equal(p.paid,1000);assert.equal(p.receive,2600);assert.equal(p.count,4);
+});
+
+test('version4與更早的備份缺人數一律補1，家庭JSON往返保留原分攤與代表人數', () => {
+  const s=fixture(3,2);fill(s,0,'lunch','100',[0,1,2],1);
+  const old=JSON.parse(C.encode(s));old.version=4;old.members.forEach(m=>delete m.count);
+  const upgraded=C.decode(JSON.stringify(old));assert.ok(upgraded.members.every(m=>m.count===1));assert.equal(json(upgraded.days),json(s.days));
+  upgraded.members[0].count=4;const restored=C.decode(C.encode(upgraded));assert.equal(json(restored),json(upgraded));
+  assert.equal(json(C.summarize(restored)),json(C.summarize(upgraded)));
+});
+
+test('家庭代表人數拒絕0、負數、字串、小數、null及超上限，失敗不修改來源', () => {
+  const s=fixture(2,1),backup=C.encode(s);
+  for(const count of [0,-1,'4',1.5,null,101]){const bad=JSON.parse(backup);bad.members[0].count=count;assert.throws(()=>C.validateState(bad),/代表人數/);assert.equal(C.encode(s),backup);}
+});
+
+test('最多100人代表100天共10000人天，較大權重仍守恆且不溢位', () => {
+  const s=drivenTrip(3,100);s.members[1].count=100;
+  const e=tripCar(s,'100000000',Array.from({length:100},()=>[0,1,2])),r=C.calculateTripExpense(s,e);
+  assert.equal(r.billablePersonDays[s.members[1].id],10000);assert.equal(totalShares(r),1000000000);
+  assert.ok(Object.values(r.shares).every(Number.isSafeInteger));assert.equal(r.days.reduce((n,d)=>n+d.allocated,0),1000000000);
+});
+
+test('家庭合併列的尾差與逐人名單參照一致，逐筆加總永遠等於支出', () => {
+  for(const counts of [[1,2],[2,3],[4,2,1],[100,1,7]])for(const units of [0,1,2,3,7,1000,1001]){
+    const entries=counts.map((weight,i)=>({id:'g'+i,weight})),virtual=counts.flatMap((n,i)=>Array.from({length:n},(_,j)=>'g'+i+'_'+j));
+    const individual=C.split(units,virtual),grouped=C.splitPeople(units,entries);
+    for(let i=0;i<counts.length;i++)assert.equal(grouped['g'+i],Object.entries(individual).filter(([id])=>id.startsWith('g'+i+'_')).reduce((n,[,v])=>n+v,0));
+    assert.equal(Object.values(grouped).reduce((n,v)=>n+v,0),units);
+  }
 });

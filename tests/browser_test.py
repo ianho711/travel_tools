@@ -1052,6 +1052,111 @@ def main():
             expect(page.locator('#pending-issues')).to_contain_text('代墊者')
             record('刪成員需確認，個人紀錄與代墊參照一併處理，不留未知 ID')
 
+            # Families are billed through a representative, but split by actual headcount.
+            dialog(lambda:page.get_by_role('button',name='重設全部',exact=True).click())
+            roster()
+            family=state();fa,fb,fc=[m['id'] for m in family['members'][:3]]
+            for pid,name,count in [(fa,'甲家庭',4),(fb,'乙家庭',2),(fc,'司機丙',1)]:
+                page.locator('#name-'+pid).fill(name)
+                page.locator('#count-'+pid).fill(str(count))
+            expect(page.locator('#roster-summary')).to_contain_text('實際 7 人')
+            for invalid in ['0','1.5','101','']:
+                page.locator('#count-'+fa).fill(invalid)
+                assert state()['members'][0]['count']==4
+                expect(page.locator('#count-'+fa)).to_have_attribute('aria-invalid','true')
+            page.locator('#count-'+fa).fill('4')
+            roster(False)
+            family=state();family_days=[d['id'] for d in family['days']]
+            family_meal=next(e['id'] for e in family['days'][0]['expenses'] if e['category']=='breakfast')
+            family_other=next(e['id'] for e in family['days'][0]['expenses'] if e['category']=='other')
+            tab(family_days[0]);set_fee(family_meal,'700',[fa,fb,fc],fa);set_fee(family_other,'60',[fa,fb],fa)
+            share(family_meal,fa,'400.0');share(family_meal,fb,'200.0');share(family_meal,fc,'100.0')
+            expect(page.locator(f'[data-count="{family_meal}"]')).to_have_text('7')
+            expect(page.locator('#daily-scroll')).to_contain_text('代表 4 人')
+            record('代表人數真實輸入4／2／1共7人，餐費依實際人數分攤；無效或空白人數不覆蓋原值')
+            for did in family_days:
+                set_use_car(did);set_driver(did,fc)
+            tab('vehicles')
+            page.get_by_role('button',name='＋ 新增車輛',exact=True).click()
+            page.locator('#vehicle-name').fill('家庭旅遊車')
+            page.locator('#vehicle-rental-amount').fill('900');page.locator('#vehicle-fuel-amount').fill('300')
+            page.locator('#vehicle-rental-payer').select_option(fa);page.locator('#vehicle-fuel-payer').select_option(fb)
+            page.get_by_role('button',name='儲存車輛',exact=True).click()
+            page.get_by_role('button',name='設定整趟搭車名單',exact=True).click()
+            page.locator('#expense-dialog [data-action="select-all"]').click()
+            for did in family_days[2:]:ride(did,fb).uncheck()
+            expect(page.locator(f'[data-trip-billable="{fa}"]')).to_have_text('16')
+            expect(page.locator(f'[data-trip-billable="{fb}"]')).to_have_text('4')
+            expect(page.locator('#expense-preview')).to_contain_text('20 人天')
+            page.get_by_role('button',name='儲存搭車名單',exact=True).click()
+            expect(page.locator(f'[data-vehicle="{fa}-rental"]')).to_have_text('720.0')
+            expect(page.locator(f'[data-vehicle="{fa}-fuel"]')).to_have_text('240.0')
+            set_driver(family_days[0],fa)
+            page.get_by_role('button',name='設定整趟搭車名單',exact=True).click()
+            expect(page.locator(f'[data-trip-billable="{fa}"]')).to_have_text('15')
+            expect(page.locator('#expense-dialog')).to_contain_text('司機免1人 · 家人照計')
+            page.get_by_role('button',name='取消',exact=True).click()
+            expect(page.locator(f'[data-transport-person="{fa}-total"]')).to_have_text('947.5')
+            set_driver(family_days[0],fa,False)
+            tab('personal');page.locator('#personal-person').select_option(fa)
+            expect(page.locator('[data-personal-source="transport"]')).to_have_text('960.0')
+            expect(page.locator('[data-personal="advanced"]')).to_have_text('1,660.0 元')
+            expect(page.locator('[data-personal="receive"]')).to_have_text('260.0 元')
+            roster();page.locator('#count-'+fa).fill('2');roster(False)
+            expect(page.locator('[data-personal-source="meals"]')).to_have_text('280.0')
+            expect(page.locator('[data-personal-source="transport"]')).to_have_text('800.0')
+            expect(page.locator('[data-personal="receive"]')).to_have_text('550.0 元')
+            roster();page.locator('#count-'+fa).fill('4');roster(False)
+            record('家庭乘車人天按人數乘天數，家庭司機只免1人；修改人數即時重算且代墊不倍乘')
+            family_payment=add_entry('payment','家庭已繳款','100')
+            family_adjustment=add_entry('adjustment','家庭其他加收','10')
+            expect(page.locator('[data-personal="paid"]')).to_have_text('100.0 元')
+            expect(page.locator('[data-personal="adjustment"]')).to_have_text('10.0 元')
+            expect(page.locator('[data-personal="receive"]')).to_have_text('350.0 元')
+            expect(page.locator('#personal-family-note')).to_contain_text('代表 4 人')
+            source_ids=[e['id'] for e in state()['carExpenses']]
+            roster();page.locator('#name-'+fa).fill('甲家庭改名');roster(False)
+            assert [e['id'] for e in state()['carExpenses']]==source_ids
+            expect(page.locator('[data-personal="receive"]')).to_have_text('350.0 元')
+            page.screenshot(path=str(artifacts/'family-personal.png'),full_page=True)
+            record('家庭帳戶統一結算，代墊、繳款與加減只扣加一次；改名保留費用、人數與收付來源')
+            family_saved=state()
+            with page.expect_download() as info:page.get_by_role('button',name='匯出 JSON',exact=True).click()
+            family_json=artifacts/'family-backup.json';info.value.save_as(family_json)
+            assert json.loads(family_json.read_text())==family_saved
+            with page.expect_download() as info:page.get_by_role('button',name='匯出試算表',exact=True).click()
+            family_xlsx=artifacts/'family-report.xlsx';info.value.save_as(family_xlsx);report=load_workbook(family_xlsx)
+            assert report['成員名單']['B4'].value==4 and report['成員名單']['B5'].value==2
+            assert report['每餐參與名單']['E4'].value==7
+            assert '代表4人' in report['每餐參與名單']['D4'].value
+            assert report['車資逐日核對']['M4'].value==4
+            assert report['車資逐日核對']['N4'].value==16
+            assert report['車資逐日核對']['O4'].value==4
+            assert report['個人結算']['M4'].value==350
+            page.reload();assert state()==family_saved
+            bad=json.loads(family_json.read_text());bad['members'][0]['count']=0
+            bad_file=artifacts/'bad-family-count.json';bad_file.write_text(json.dumps(bad,ensure_ascii=False))
+            page.locator('#import-file').set_input_files(str(bad_file));expect(page.locator('#flash')).to_contain_text('代表人數')
+            assert state()==family_saved
+            dialog(lambda:page.get_by_role('button',name='重設全部',exact=True).click())
+            dialog(lambda:page.locator('#import-file').set_input_files(str(family_json)))
+            assert state()==family_saved
+            record('家庭人數可實際JSON備份還原及重新整理保存；錯誤人數拒絕覆蓋，XLSX有人數與人天核對')
+            with page.expect_download() as info:page.get_by_role('button',name='匯出唯讀網頁',exact=True).click()
+            family_view=artifacts/'family-view.html';info.value.save_as(family_view)
+            context.route('**/family-view.html',lambda r:r.fulfill(path=str(family_view),content_type='text/html; charset=utf-8'))
+            family_reader=context.new_page();family_reader.goto(url.replace('index.html','family-view.html'))
+            family_reader.locator('#tab-personal').click();family_reader.locator('#personal-person').select_option(fa)
+            expect(family_reader.locator('#personal-family-note')).to_contain_text('代表 4 人')
+            expect(family_reader.locator('[data-personal="receive"]')).to_have_text('350.0 元');family_reader.close()
+            page.set_viewport_size({'width':390,'height':844});roster()
+            assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
+            page.locator('#count-'+fa).fill('5');assert state()['members'][0]['count']==5
+            page.locator('#count-'+fa).fill('4');assert state()==family_saved
+            page.screenshot(path=str(artifacts/'family-mobile-roster.png'),full_page=True)
+            roster(False);page.set_viewport_size({'width':1440,'height':1000})
+            record('唯讀快照正確顯示家庭人數與結算；390px手機可編輯代表人數且沒有整頁溢出')
+
             assert not errors, errors
             assert not external_requests, external_requests
             record('整段操作無 JavaScript 例外，所有外部網路請求被攔截且實際為零')
