@@ -742,13 +742,13 @@ test('家庭合併列的尾差與逐人名單參照一致，逐筆加總永遠�
   }
 });
 
-test('租金7000減點數優惠400，以6600分攤及代墊，油錢800不受影響', () => {
+test('租金7000減點數優惠400，以6600分攤但租金代墊保留7000，油錢800不受影響', () => {
   const s=drivenTrip(3,2),rental=tripCar(s,'7000',[[0,1,2],[0,1,2]],'rental');
   rental.discount='400';rental.discountNote='點數折抵';tripCar(s,'800',[[0,1,2],[0,1,2]],'fuel');
   const r=C.calculateTripExpense(s,rental),summary=C.summarize(s);
   assert.equal(r.grossUnits,70000);assert.equal(r.discountUnits,4000);assert.equal(r.units,66000);
   assert.equal(json(shares(s,r)),json([0,33000,33000]));assert.equal(summary.total,74000);assert.equal(summary.allocated,74000);
-  assert.equal(summary.people[0].advanced,74000);assert.equal(summary.people[1].total,37000);
+  assert.equal(summary.people[0].advanced,78000);assert.equal(summary.people[1].total,37000);
   assert.equal(rental.amount,'7000');assert.equal(rental.discount,'400');assert.equal(s.ledger.length,0);
 });
 
@@ -760,10 +760,10 @@ test('三台不同租金及優惠逐車獨立扣除，總車資與各費用守�
   for(const e of summary.expenses)assert.equal(totalShares(e),e.units);
 });
 
-test('空白與0優惠維持原租金，全額折抵為0、不產生假分攤或代墊', () => {
+test('空白與0優惠維持原租金，全額收入抵減後分攤為0，原租金代墊保留', () => {
   const s=drivenTrip(3,1),e=tripCar(s,'100',[[0,1,2]],'rental');
   for(const discount of ['','0','0.0']){e.discount=discount;assert.equal(C.calculateTripExpense(s,e).units,1000);}
-  e.discount='100';e.rides=[];e.payerId=null;const r=C.calculateTripExpense(s,e);
+  e.discount='100';e.rides=[];const r=C.calculateTripExpense(s,e);
   assert.equal(r.units,0);assert.equal(r.issues.length,0);assert.equal(r.allocated,0);assert.equal(C.summarize(s).total,0);
 });
 
@@ -772,11 +772,11 @@ test('優惠以0.1元整數相減，預設3人各付33.3，兩種算法均守恆
   for(const method of ['person-days','day-average']){e.method=method;const r=C.calculateTripExpense(s,e);assert.equal(r.units,999);assert.equal(totalShares(r),999);assert.equal(r.days.reduce((n,d)=>n+d.allocated,0),999);assert.equal(json(shares(s,r)),json(method==='person-days'?[0,333,333,333]:[0,334,333,332]));}
 });
 
-test('優惠超過租金或非法金額保留草稿並提示，修正前不計費且不產生負數', () => {
+test('優惠超過租金或非法金額保留草稿並提示，修正前保留原代墊、暫不分攤且不產生負數', () => {
   for(const discount of ['-1','0.01','101','NaN','Infinity']){
     const s=drivenTrip(3,1),e=tripCar(s,'100',[[0,1,2]],'rental');e.discount=discount;
-    const r=C.calculateTripExpense(s,e);assert.equal(r.amountValid,false);assert.equal(r.units,0);assert.equal(r.grossUnits,1000);
-    assert.ok(r.issues.some(i=>i.code==='invalid-discount'));assert.equal(totalShares(r),0);assert.equal(C.summarize(s).people[0].advanced,0);
+    const r=C.calculateTripExpense(s,e);assert.equal(r.amountValid,false);assert.equal(r.units,1000);assert.equal(r.grossUnits,1000);
+    assert.ok(r.issues.some(i=>i.code==='invalid-discount'));assert.equal(totalShares(r),0);assert.equal(C.summarize(s).people[0].advanced,1000);
     const restored=C.decode(C.encode(s));assert.equal(restored.carExpenses[0].amount,'100');assert.equal(restored.carExpenses[0].discount,discount);
     restored.carExpenses[0].discount='10';assert.equal(C.calculateTripExpense(restored,restored.carExpenses[0]).units,900);
   }
@@ -795,7 +795,7 @@ test('家庭乘車人天使用優惠後車資，家庭代墊仍是實付總額�
   const e=tripCar(s,'600',[[0,1,2],[0,1,2],[0,1],[0,1]],'rental');e.discount='100';e.payerId=s.members[1].id;
   fill(s,0,'dinner','120',[1,2],0);const r=C.summarize(s);
   assert.equal(r.people[1].transport,4000);assert.equal(r.people[2].transport,1000);
-  assert.equal(r.people[1].advanced,5000);assert.equal(r.people[1].receive,200);assert.equal(r.total,6200);assert.equal(r.allocated,6200);
+  assert.equal(r.people[1].advanced,6000);assert.equal(r.people[1].receive,1200);assert.equal(r.total,6200);assert.equal(r.allocated,6200);
 });
 
 test('同日全天與半天按1:0.5分攤，300元為200與100且司機仍為0',()=>{
@@ -850,7 +850,7 @@ test('半天尾差固定名單順序，兩種算法及大金額逐日與逐筆�
 test('半天與租車優惠同時使用，代墊及收款不隨時長打折',()=>{
   const s=drivenTrip(3,1),e=tripCar(s,'700',[[0,1,2]],'rental');e.discount='100';e.payerId=s.members[1].id;e.rides[0].halfDayIds=[s.members[2].id];
   ledger(s,2,'payment','50');const r=C.summarize(s);
-  assert.equal(r.people[1].transport,4000);assert.equal(r.people[2].transport,2000);assert.equal(r.people[1].advanced,6000);
+  assert.equal(r.people[1].transport,4000);assert.equal(r.people[2].transport,2000);assert.equal(r.people[1].advanced,7000);
   assert.equal(r.people[2].paid,500);assert.equal(r.people[2].pay,1500);assert.equal(r.total,r.allocated);
 });
 
@@ -869,4 +869,55 @@ test('半天JSON拒絕非陣列、未知或重複ID，失敗不改原帳，未�
     const bad=JSON.parse(backup),ride=field==='transportRides'?bad.transportRides[0]:bad.carExpenses[0].rides[0];ride.halfDayIds=value;
     assert.throws(()=>C.validateState(bad));assert.equal(C.encode(s),backup);
   }
+});
+
+test('實付5250、優惠收入400：代墊5250完整保留，4850由乘客分攤',()=>{
+  const s=drivenTrip(3,1),e=tripCar(s,'5250',[[0,1,2]],'rental');e.discount='400';e.payerId=s.members[1].id;
+  const r=C.summarize(s),cost=C.calculateTripExpense(s,e);
+  assert.equal(cost.advanceUnits,52500);assert.equal(cost.incomeUnits,4000);
+  assert.equal(r.cashExpense,52500);assert.equal(r.income,4000);assert.equal(r.total,48500);assert.equal(r.allocated,48500);assert.equal(r.difference,0);
+  assert.equal(r.people[1].advanced,52500);assert.equal(r.people[1].transport,24250);assert.equal(r.people[1].receive,28250);
+  assert.equal(r.advances.length,1);assert.equal(r.advances[0].units,52500);assert.equal(s.ledger.length,0);
+});
+
+test('新增、修改、清除或全額優惠收入都不改實付代墊，零分攤仍須有代墊者',()=>{
+  const s=drivenTrip(3,1),e=tripCar(s,'5250',[[0,1,2]],'rental');
+  for(const discount of ['','0','400','500','5250']){
+    e.discount=discount;const r=C.summarize(s);
+    assert.equal(r.people[0].advanced,52500);assert.equal(r.transport.people[0].advanced,52500);
+    assert.equal(r.total+r.income,r.cashExpense);assert.equal(r.cashExpense,52500);assert.equal(r.allocated,r.total);
+    assert.equal(r.people.reduce((n,p)=>n+p.advanced,0),52500);assert.equal(r.people.reduce((n,p)=>n+p.paid,0),0);
+  }
+  e.payerId=null;const r=C.summarize(s);assert.equal(r.unassignedAdvance,52500);assert.ok(r.issues.some(i=>i.code==='missing-payer'));
+});
+
+test('非法優惠收入不抹掉實付5250及代墊，待處理差額5250而不是零',()=>{
+  const s=drivenTrip(3,1),e=tripCar(s,'5250',[[0,1,2]],'rental');
+  for(const discount of ['-1','6000','0.01','NaN']){
+    e.discount=discount;const r=C.summarize(s);
+    assert.equal(r.people[0].advanced,52500);assert.equal(r.cashExpense,52500);assert.equal(r.income,0);
+    assert.equal(r.allocated,0);assert.equal(r.difference,52500);assert.ok(r.issues.some(i=>i.code==='invalid-discount'));
+  }
+});
+
+test('家庭半天、多車、代墊與收退款並存，優惠收入只計一次且團體現金流平衡',()=>{
+  const s=drivenTrip(4,2);s.members[1].count=4;s.members[2].count=2;
+  for(const [amount,discount,payer] of [['5250','400',1],['7000','500',2],['6500','',3]]){
+    const e=tripCar(s,amount,[[0,1,2,3],[0,1,2,3]],'rental');e.discount=discount;e.payerId=s.members[payer].id;e.rides[0].halfDayIds=[s.members[1].id];
+  }
+  tripCar(s,'800',[[0,1,2,3],[0,1,2,3]],'fuel');fill(s,0,'lunch','700',[0,1,2,3],0);
+  ledger(s,1,'payment','100');ledger(s,1,'refund','20');ledger(s,2,'adjustment','10');
+  const r=C.summarize(s),balance=r.people.reduce((n,p)=>n+p.pay-p.receive,0);
+  assert.equal(r.income,9000);assert.equal(r.cashExpense,202500);assert.equal(r.cashExpense-r.income,r.allocated);
+  assert.equal(r.people.reduce((n,p)=>n+p.advanced,0),r.cashExpense);
+  assert.equal(balance+r.collected-r.adjusted+r.income,0);
+  for(const e of r.expenses)assert.equal(totalShares(e),e.units);
+});
+
+test('version7備份升級保留實付與優惠原值、ID、半天及代墊來源，JSON往返一致',()=>{
+  const s=drivenTrip(3,1),e=tripCar(s,'5250',[[0,1,2]],'rental');e.discount='400';e.rides[0].halfDayIds=[s.members[2].id];
+  const old=JSON.parse(C.encode(s));old.version=7;const restored=C.decode(JSON.stringify(old));
+  assert.equal(restored.carExpenses[0].id,e.id);assert.equal(restored.carExpenses[0].amount,'5250');assert.equal(restored.carExpenses[0].discount,'400');
+  assert.equal(restored.carExpenses[0].payerId,e.payerId);assert.equal(json(restored.carExpenses[0].rides),json(e.rides));
+  assert.equal(C.summarize(restored).people[0].advanced,52500);assert.equal(json(C.decode(C.encode(restored))),json(restored));
 });

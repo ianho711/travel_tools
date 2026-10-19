@@ -53,6 +53,7 @@ s=base(3,1);s.days[0].useCar=true;s.days[0].drivers=[s.members[0].id];const inva
 s=base(3,1);s.days[0].useCar=true;s.days[0].drivers=[s.members[0].id];const half=pool(s,'300',[[0,1,2]]);half.rides[0].halfDayIds=[s.members[2].id];s.transportRides=JSON.parse(JSON.stringify(half.rides));add('half_day_full_and_half',s);
 s=base(3,2);s.members[1].count=4;s.members[2].count=2;s.days.forEach(d=>{d.useCar=true;d.drivers=[s.members[0].id];});s.days[1].drivers.push(s.members[1].id);const halfFamily=pool(s,'750',[[0,1,2],[0,1,2]],'rental');halfFamily.discount='100';halfFamily.rides[0].halfDayIds=[s.members[1].id];halfFamily.rides[1].halfDayIds=[s.members[1].id,s.members[2].id];add('half_day_family_driver_discount',s);
 s=base(3,2);s.days.forEach(d=>{d.useCar=true;d.drivers=[s.members[0].id];});const halfAverage=pool(s,'100',[[0,1,2],[0,1,2]],'fuel','day-average');halfAverage.rides[0].halfDayIds=[s.members[2].id];halfAverage.rides[1].halfDayIds=[s.members[1].id];add('half_day_daily_average',s);
+s=base(3,1);s.days[0].useCar=true;s.days[0].drivers=[s.members[0].id];const paid5250=pool(s,'5250',[[0,1,2]],'rental');paid5250.discount='400';paid5250.payerId=s.members[1].id;add('actual_advance_5250_income_400',s);
 fs.writeFileSync(output+'/fixtures.json',JSON.stringify(fixtures));
 '''
 
@@ -89,6 +90,11 @@ def main():
                     else:assert actual==expected,(f['name'],sh.title,r,c,actual,expected)
         s=f['state'];summary=f['summary'];ov=wb['整趟總覽']
         assert units(ov['B3'].value)==summary['total']
+        assert units(ov['J3'].value)==summary['cashExpense']
+        assert units(ov['L3'].value)==summary['income']
+        assert summary['cashExpense']-summary['income']==summary['total']
+        assert 'v1.8.0' in ov['A1'].value
+        assert wb['使用說明']['B3'].value=='v1.8.0'
         assert units(ov['D3'].value)==summary['allocated']
         assert units(ov['F3'].value)==summary['difference']
         assert ov['H3'].value==len(summary['issues'])
@@ -158,6 +164,7 @@ def main():
         for ei,e in enumerate(s['carExpenses'],4):
             result=next(r for r in summary['expenses'] if r['expenseId']==e['id'])
             assert pool_sheet.cell(ei,1).value==e['name']
+            assert units(pool_sheet.cell(ei,10).value)==result['advanceUnits']
             if result['amountValid']:
                 assert units(pool_sheet.cell(ei,3).value)==result['units']
             else:
@@ -196,6 +203,10 @@ def main():
             assert units(fleet.cell(vi,2).value)==rent
             assert units(fleet.cell(vi,3).value)==gas
             assert units(fleet.cell(vi,4).value)==rent+gas
+        if f['name']=='actual_advance_5250_income_400':
+            assert ov['B3'].value==4850 and ov['J3'].value==5250 and ov['L3'].value==400
+            assert ov['I8'].value==5250 and wb['個人結算']['H5'].value==5250
+            assert wb['整趟車資']['J4'].value==5250 and wb['代墊明細']['C4'].value==5250
         if f['name']=='half_day_full_and_half':
             assert daily_pool['P5'].value==1 and daily_pool['P6'].value==0.5
             assert daily_pool['Q5'].value==2 and daily_pool['Q6'].value==1
@@ -207,9 +218,9 @@ def main():
             assert fleet['B4'].value==6600 and fleet['C4'].value==800 and fleet['D4'].value==7400
             assert fleet['H4'].value==7000 and fleet['I4'].value==400
             assert fleet['J4'].value=='點數 <折抵> =SUM(1,2)' and fleet['J4'].data_type=='s'
-            assert ov['B3'].value==7400 and ov['I7'].value==6600
+            assert ov['B3'].value==7400 and ov['I7'].value==7000
         if f['name']=='rental_discount_invalid_pending':
-            assert ov['B3'].value==0 and ov['H3'].value>0
+            assert ov['B3'].value==100 and ov['H3'].value>0
             assert '優惠' in wb['待處理項目']['C3'].value
         if f['name']=='three_vehicles_exclude_private_charter':
             assert fleet['D7'].value==21950

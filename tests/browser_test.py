@@ -60,7 +60,8 @@ def main():
 
             context.route('**/*', route_request)
             page.goto(url)
-            expect(page).to_have_title('旅伴帳本｜旅遊費用分攤')
+            expect(page).to_have_title('旅伴帳本 v1.8.0｜旅遊費用分攤')
+            expect(page.locator('#app-version')).to_have_text('v1.8.0')
             expect(page.get_by_role('tab')).to_have_count(7)
             expect(page.locator('#total-expense')).to_have_text('0.0元')
             expect(page.locator('#roster-summary')).to_contain_text('0 位已填姓名 / 25 個名額')
@@ -487,7 +488,7 @@ def main():
             editor_state = state()
             shared = context.new_page()
             shared.goto(url.replace('index.html', 'shared-view.html'))
-            expect(shared).to_have_title('旅伴帳本｜唯讀旅遊費用')
+            expect(shared).to_have_title('旅伴帳本 v1.8.0｜唯讀旅遊費用')
             expect(shared.locator('.tools')).to_be_hidden()
             expect(shared.locator('#roster')).to_be_hidden()
             expect(shared.locator('[data-action="add-day"]')).to_be_hidden()
@@ -1157,7 +1158,7 @@ def main():
             roster(False);page.set_viewport_size({'width':1440,'height':1000})
             record('唯讀快照正確顯示家庭人數與結算；390px手機可編輯代表人數且沒有整頁溢出')
 
-            # Rental discounts reduce both the amount shared and the payer's actual advance.
+            # Rental incentives reduce shared costs; full actual advances remain unchanged.
             discount_before=state();discount_vehicle=discount_before['vehicles'][0]['id']
             rental_id=next(e['id'] for e in discount_before['carExpenses'] if e['category']=='rental')
             tab('vehicles');page.locator(f'[data-action="edit-vehicle"][data-vehicle="{discount_vehicle}"]').click()
@@ -1176,10 +1177,10 @@ def main():
             expect(page.locator('#total-difference')).to_have_text('0.0元')
             tab('personal');page.locator('#personal-person').select_option(fa)
             expect(page.locator('[data-personal-source="transport"]')).to_have_text('880.0')
-            expect(page.locator('[data-personal="advanced"]')).to_have_text('1,560.0 元')
-            expect(page.locator('[data-personal="receive"]')).to_have_text('330.0 元')
+            expect(page.locator('[data-personal="advanced"]')).to_have_text('1,660.0 元')
+            expect(page.locator('[data-personal="receive"]')).to_have_text('430.0 元')
             assert state()['ledger']==discount_before['ledger']
-            record('每台車可填原租金、優惠及說明，取消不寫入；實付租金、支出、代墊與家庭結算只扣一次優惠')
+            record('每台車可填原租金、優惠及說明，取消不寫入；優惠另列收入抵分攤，代墊仍保留原支付全額，家庭結算正確')
             page.locator(f'[data-action="goto-expense"][data-expense="{rental_id}"]').click()
             expect(page.locator('#discount-'+rental_id)).to_have_value('100')
             page.locator('#discount-'+rental_id).fill('50');save_fee()
@@ -1190,7 +1191,7 @@ def main():
             expect(page.locator('#vehicle-rental-discount')).to_have_attribute('aria-invalid','true')
             page.get_by_role('button',name='儲存車輛',exact=True).click()
             expect(page.locator(f'[data-fleet="{discount_vehicle}-rental"]')).to_have_text('待修正')
-            tab('overview');expect(page.locator('#pending-issues')).to_contain_text('不可超過原租金')
+            tab('overview');expect(page.locator('#pending-issues')).to_contain_text('不可超過租金實付')
             page.locator(f'[data-action="goto-expense"][data-expense="{rental_id}"]').click()
             expect(page.locator('#discount-'+rental_id)).to_be_focused()
             page.locator('#discount-'+rental_id).fill('900');save_fee()
@@ -1209,7 +1210,7 @@ def main():
             assert report['各車交通費']['H4'].value==900 and report['各車交通費']['I4'].value==100
             assert report['各車交通費']['J4'].value=='點數折抵'
             assert report['整趟車資']['G4'].value==900 and report['整趟車資']['H4'].value==100
-            assert report['整趟總覽']['B3'].value==1860 and report['個人結算']['M4'].value==330
+            assert report['整趟總覽']['B3'].value==1860 and report['個人結算']['M4'].value==430
             page.reload();assert state()==discount_saved
             bad=json.loads(discount_json.read_text());next(e for e in bad['carExpenses'] if e['category']=='rental')['discount']=100
             bad_file=artifacts/'bad-discount-format.json';bad_file.write_text(json.dumps(bad,ensure_ascii=False))
@@ -1259,8 +1260,8 @@ def main():
             assert all(e['rides'][-1]['halfDayIds']==[fa] for e in half_saved['carExpenses'])
             tab('personal');page.locator('#personal-person').select_option(fa)
             expect(page.locator('[data-personal-source="transport"]')).to_have_text('855.7')
-            expect(page.locator('[data-personal="advanced"]')).to_have_text('1,560.0 元')
-            expect(page.locator('[data-personal="receive"]')).to_have_text('354.3 元')
+            expect(page.locator('[data-personal="advanced"]')).to_have_text('1,660.0 元')
+            expect(page.locator('[data-personal="receive"]')).to_have_text('454.3 元')
             expect(page.locator('[data-personal-source="meals"]')).to_have_text('400.0')
             record('逐人逐日全天／半天可操作，4人半天算2人天；取消不寫入，切換參與及日期保留時長，儲存同步各車租金油錢')
             set_driver(half_day,fa,True);open_plan()
@@ -1279,7 +1280,7 @@ def main():
             assert sum(row[15]==0.5 for row in rows)==2
             assert all(row[13]==14 for row in rows)
             assert all(row[16]==4 for row in rows if row[15]==0.5)
-            assert report['個人結算']['M4'].value==354.3
+            assert report['個人結算']['M4'].value==454.3
             page.reload();assert state()==half_saved
             bad=json.loads(half_json.read_text());bad['transportRides'][-1]['halfDayIds']=['unknown']
             bad_file=artifacts/'bad-half-day.json';bad_file.write_text(json.dumps(bad,ensure_ascii=False))
@@ -1313,6 +1314,51 @@ def main():
             page.get_by_role('button',name='儲存搭車名單',exact=True).click();page.reload();assert state()==half_saved
             page.set_viewport_size({'width':1440,'height':1000})
             record('唯讀網頁保留半天且不能修改；390px手機可選全天／半天、儲存及刷新，沒有整頁水平溢出')
+
+            # A separate incentive must never reduce the representative's actual payment.
+            tab('vehicles');page.locator(f'[data-action="edit-vehicle"][data-vehicle="{discount_vehicle}"]').click()
+            page.locator('#vehicle-rental-amount').fill('5250');page.locator('#vehicle-rental-discount').fill('400')
+            expect(page.locator('#vehicle-rental-net')).to_have_text('4,850.0')
+            expect(page.locator('#vehicle-preview')).to_contain_text('租金代墊仍為 5,250.0 元')
+            page.get_by_role('button',name='儲存車輛',exact=True).click()
+            tab('personal');page.locator('#personal-person').select_option(fa)
+            expect(page.locator('[data-personal="advanced"]')).to_have_text('6,010.0 元')
+            expect(page.locator('[data-personal="receive"]')).to_have_text('1,654.3 元')
+            page.locator(f'[data-action="goto-expense"][data-expense="{rental_id}"]').click()
+            expect(page.locator('#expense-preview')).to_contain_text('代墊 5,250.0 元')
+            page.locator('#discount-'+rental_id).fill('200');save_fee()
+            tab('personal');expect(page.locator('[data-personal="advanced"]')).to_have_text('6,010.0 元')
+            page.locator(f'[data-action="goto-expense"][data-expense="{rental_id}"]').click()
+            page.locator('#discount-'+rental_id).fill('400');save_fee()
+            tab('overview');expect(page.locator('#total-expense')).to_have_text('5,910.0元')
+            expect(page.locator('#total-cash-expense')).to_have_text('6,310.0')
+            expect(page.locator('#total-income')).to_have_text('400.0')
+            expect(page.locator('#total-difference')).to_have_text('0.0元')
+            assert state()['ledger']==half_saved['ledger']
+            record('實付5250與優惠收入400分開記錄，修改收入不改代墊；家庭半天結算及團體收入核對正確')
+            income_saved=state()
+            with page.expect_download() as info:page.get_by_role('button',name='匯出 JSON',exact=True).click()
+            income_json=artifacts/'rental-income-backup.json';info.value.save_as(income_json)
+            page.reload();assert state()==income_saved
+            dialog(lambda:page.get_by_role('button',name='重設全部',exact=True).click())
+            dialog(lambda:page.locator('#import-file').set_input_files(str(income_json)));assert state()==income_saved
+            with page.expect_download() as info:page.get_by_role('button',name='匯出試算表',exact=True).click()
+            income_xlsx=artifacts/'rental-income-report.xlsx';info.value.save_as(income_xlsx);report=load_workbook(income_xlsx)
+            assert report['整趟車資']['J4'].value==5250
+            assert report['整趟總覽']['J3'].value==6310 and report['整趟總覽']['L3'].value==400
+            assert report['個人結算']['H4'].value==6010 and report['個人結算']['M4'].value==1654.3
+            assert 'v1.8.0' in report['整趟總覽']['A1'].value
+            assert report['使用說明']['B3'].value=='v1.8.0'
+            with page.expect_download() as info:page.get_by_role('button',name='匯出唯讀網頁',exact=True).click()
+            income_view=artifacts/'rental-income-view.html';info.value.save_as(income_view)
+            context.route('**/rental-income-view.html',lambda r:r.fulfill(path=str(income_view),content_type='text/html; charset=utf-8'))
+            ir=context.new_page();ir.goto(url.replace('index.html','rental-income-view.html'))
+            expect(ir).to_have_title('旅伴帳本 v1.8.0｜唯讀旅遊費用')
+            expect(ir.locator('#app-version')).to_have_text('v1.8.0')
+            expect(ir.locator('#total-income')).to_have_text('400.0')
+            ir.locator('#tab-personal').click();ir.locator('#personal-person').select_option(fa)
+            expect(ir.locator('[data-personal="advanced"]')).to_have_text('6,010.0 元');ir.close()
+            record('收入與全額代墊可保存還原及匯出，頁面／分頁標題／唯讀網頁／XLSX一致顯示v1.8.0')
 
             assert not errors, errors
             assert not external_requests, external_requests
