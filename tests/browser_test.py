@@ -98,14 +98,44 @@ def main():
             def share(eid, pid, value):
                 expect(page.locator(f'[data-share="{eid}-{pid}"]')).to_have_text(value)
 
-            def all_button(eid, select=True):
-                return page.locator(f'[data-action="{"select-all" if select else "select-none"}"][data-expense="{eid}"]')
+            def open_fee(eid):
+                modal = page.locator('#expense-dialog')
+                if modal.is_visible():
+                    if modal.get_attribute('data-expense') == eid:
+                        return
+                    page.get_by_role('button', name='取消', exact=True).click()
+                page.locator('#edit-' + eid).click()
+                expect(modal).to_be_visible()
+
+            def save_fee():
+                page.get_by_role('button', name='儲存費用', exact=True).click()
+                expect(page.locator('#expense-dialog')).to_be_hidden()
+
+            def set_field(kind, eid, value):
+                open_fee(eid)
+                if kind in ('payer', 'category'):
+                    field(kind, eid).select_option(value)
+                else:
+                    field(kind, eid).fill(value)
+                save_fee()
+
+            def bulk(eid, select=True):
+                open_fee(eid)
+                page.locator(f'#expense-dialog [data-action="{"select-all" if select else "select-none"}"]').click()
+                save_fee()
 
             def set_fee(eid, amount, participants, payer):
+                open_fee(eid)
                 field('amount', eid).fill(amount)
                 field('payer', eid).select_option(payer)
+                save_fee()
                 for pid in participants:
                     part(eid, pid).check()
+
+            def expect_issue(eid, text):
+                open_fee(eid)
+                expect(page.locator('#expense-dialog-issues')).to_contain_text(text)
+                page.get_by_role('button', name='取消', exact=True).click()
 
             def driver(day_id, pid):
                 return page.locator(f'#driver-{day_id}-{pid}')
@@ -168,7 +198,7 @@ def main():
             share(e1['fuel'], b, '50.0')
             share(e1['breakfast'], a, '33.4')
             driver(d1['id'], a).uncheck()
-            expect(page.locator('#expense-' + e1['fuel'])).to_contain_text('尚未設定具名司機')
+            expect_issue(e1['fuel'], '尚未設定具名司機')
             driver(d1['id'], b).check()
             share(e1['fuel'], a, '50.0')
             share(e1['fuel'], b, '0.0')
@@ -197,9 +227,11 @@ def main():
             expect(page.locator('[data-field="use-car"]')).to_be_checked()
             message = dialog(lambda: page.locator('[data-field="use-car"]').click())
             assert '仍會保留' in message
+            open_fee(e1['fuel'])
             expect(field('amount', e1['fuel'])).to_have_value('100')
+            page.get_by_role('button', name='取消', exact=True).click()
             share(e1['fuel'], b, '0.0')
-            expect(page.locator('#expense-' + e1['fuel'])).to_contain_text('當日未用車')
+            expect_issue(e1['fuel'], '當日未用車')
             tab('overview')
             expect(page.locator('#total-difference')).to_have_text('220.0元')
             tab(d1['id'])
@@ -207,27 +239,31 @@ def main():
             share(e1['fuel'], b, '50.0')
             record('取消用車須確認，可取消操作；費用不遺失、差額顯示，重新用車可恢復')
 
-            field('amount', e1['breakfast']).fill('100.1')
+            set_field('amount', e1['breakfast'], '100.1')
             share(e1['breakfast'], a, '33.4')
             share(e1['breakfast'], b, '33.4')
-            all_button(e1['lunch'], False).click()
-            expect(page.locator('#expense-' + e1['lunch'])).to_contain_text('沒有可分攤者')
+            bulk(e1['lunch'], False)
+            expect_issue(e1['lunch'], '沒有可分攤者')
             share(e1['lunch'], b, '0.0')
             part(e1['lunch'], b).check()
             part(e1['lunch'], c).check()
-            field('amount', e1['other']).fill('0')
-            expect(page.locator('#expense-' + e1['other'] + ' .expense-status')).to_be_empty()
-            field('amount', e1['other']).fill('-1')
+            set_field('amount', e1['other'], '0')
+            open_fee(e1['other'])
+            expect(page.locator('#expense-dialog-issues')).to_be_hidden()
+            page.get_by_role('button', name='取消', exact=True).click()
+            set_field('amount', e1['other'], '-1')
+            open_fee(e1['other'])
             expect(field('amount', e1['other'])).to_have_attribute('aria-invalid', 'true')
-            field('amount', e1['other']).fill('')
+            page.get_by_role('button', name='取消', exact=True).click()
+            set_field('amount', e1['other'], '')
             record('修改金額即時計算，正金額無分攤者、0 元、空白與不合法金額正確處理')
 
             roster()
             page.locator('#name-' + last).fill('第30位旅伴')
             roster(False)
-            all_button(e1['dinner'], False).click()
+            bulk(e1['dinner'], False)
             part(e1['dinner'], last).check()
-            field('payer', e1['dinner']).select_option(last)
+            set_field('payer', e1['dinner'], last)
             share(e1['dinner'], last, '70.0')
             record('第 30 位成員可真正點選、分攤及代墊')
 
@@ -236,10 +272,10 @@ def main():
             page.locator('#name-' + c).fill('   ')
             roster(False)
             expect(part(e1['breakfast'], c)).to_be_disabled()
-            all_button(e1['breakfast'], False).click()
+            bulk(e1['breakfast'], False)
             expense = next(e for e in state()['days'][0]['expenses'] if e['id'] == e1['breakfast'])
             assert expense['participantIds'] == [c]
-            all_button(e1['breakfast']).click()
+            bulk(e1['breakfast'])
             expect(page.locator(f'[data-count="{e1["breakfast"]}"]')).to_have_text('3')
             share(e1['breakfast'], c, '0.0')
             roster()
@@ -260,21 +296,18 @@ def main():
             expect(part(e1['breakfast'], a)).to_be_checked()
             record('改姓名同步顯示，分攤、代墊、參與及司機 ID 不變')
 
-            # Only the compact title sticks; the large editing form must scroll away.
+            # The matrix has no embedded expense form; only compact column titles stick.
             scroll = page.locator('#daily-scroll')
+            assert page.locator('#daily-scroll input:not([type=checkbox]),#daily-scroll select').count() == 0
             scroll.evaluate('(el) => { el.scrollLeft=0; el.scrollTop=0; }')
             x = page.locator('#daily-scroll tbody .name-cell').first.bounding_box()['x']
-            editor_height = page.locator('#daily-expense-settings').bounding_box()['height']
-            scroll.evaluate('(el, top) => { el.scrollLeft=450; el.scrollTop=top; }', editor_height + 100)
             y = page.locator('#title-' + e1['breakfast']).bounding_box()['y']
-            assert page.locator('#expense-' + e1['breakfast']).bounding_box()['y'] < scroll.bounding_box()['y'] - 100
-            scroll.evaluate('(el) => { el.scrollTop+=200; }')
+            scroll.evaluate('(el) => { el.scrollLeft=450; el.scrollTop=550; }')
             assert abs(page.locator('#daily-scroll tbody .name-cell').first.bounding_box()['x'] - x) < 2
             assert abs(page.locator('#title-' + e1['breakfast']).bounding_box()['y'] - y) < 2
             assert page.locator('.daily-compact-row').bounding_box()['height'] <= 64
-            # At a smaller laptop viewport, enough space remains for several participant rows.
             page.set_viewport_size({'width': 1280, 'height': 720})
-            scroll.evaluate('(el, top) => { el.scrollLeft=0; el.scrollTop=top; el.scrollIntoView({block:"center"}); }', editor_height + 300)
+            scroll.evaluate('(el) => { el.scrollLeft=0; el.scrollTop=300; el.scrollIntoView({block:"center"}); }')
             visible_rows = scroll.evaluate("""el => {
                 const box=el.getBoundingClientRect(), head=el.querySelector('.daily-compact-row').getBoundingClientRect();
                 return [...el.querySelectorAll('tbody tr')].filter(row=>{
@@ -282,42 +315,50 @@ def main():
                 }).length;
             }""")
             assert visible_rows >= 4, visible_rows
-            page.screenshot(path=str(artifacts / 'laptop-daily-scrolled.png'), full_page=True)
-            record('費用編輯區會隨捲動移開，僅固定不足 64px 的精簡標題；720px 高度可完整看到至少四列人員')
+            page.screenshot(path=str(artifacts / 'laptop-daily-matrix.png'), full_page=True)
+            record('表格無嵌入式費用表單，僅固定不足 64px 的精簡標題；720px 高度可完整看到至少四列人員')
 
             original = state()
-            summary_before = page.evaluate('(s) => TripCore.summarize(s)', original)
-            page.get_by_role('button', name='收合費用設定', exact=True).click()
-            expect(page.locator('#daily-expense-settings')).to_be_hidden()
+            open_fee(e1['breakfast'])
+            modal = page.locator('#expense-dialog')
+            assert modal.evaluate('(el) => el.matches(":modal")')
+            assert modal.bounding_box()['width'] >= 850
+            assert field('expense-name', e1['breakfast']).bounding_box()['width'] >= 700
+            field('amount', e1['breakfast']).fill('300')
+            page.locator(f'#expense-dialog [data-field="draft-participation"][data-person="{a}"]').uncheck()
+            assert state() == original, 'Unsaved dialog edits must not change persistent data'
+            page.get_by_role('button', name='取消', exact=True).click()
             assert state() == original
-            assert page.locator('.daily-compact-row').bounding_box()['y'] - scroll.bounding_box()['y'] < 2
-            part(e1['breakfast'], a).uncheck()
-            part(e1['breakfast'], a).check()
-            assert page.evaluate('(s) => TripCore.summarize(s)', state()) == summary_before
-            original = state()
-            page.screenshot(path=str(artifacts / 'laptop-daily-collapsed.png'), full_page=True)
-            page.get_by_role('button', name='展開費用設定', exact=True).click()
-            expect(page.locator('#daily-expense-settings')).to_be_visible()
+            open_fee(e1['breakfast'])
+            field('expense-name', e1['breakfast']).fill('未儲存的名稱')
+            page.keyboard.press('Escape')
+            expect(modal).to_be_hidden()
+            assert state() == original
+            open_fee(e1['breakfast'])
             amount_before = field('amount', e1['breakfast']).input_value()
             field('amount', e1['breakfast']).fill('-1')
-            page.get_by_role('button', name='收合費用設定', exact=True).click()
+            expect(page.locator('#expense-dialog-issues')).to_contain_text('金額須為非負數')
+            save_fee()
             tab('overview')
             page.locator(f'[data-action="goto-expense"][data-expense="{e1["breakfast"]}"]').click()
-            expect(page.locator('#daily-expense-settings')).to_be_visible()
+            expect(modal).to_be_visible()
             expect(field('amount', e1['breakfast'])).to_be_focused()
             field('amount', e1['breakfast']).fill(amount_before)
+            page.screenshot(path=str(artifacts / 'desktop-expense-dialog.png'), full_page=True)
+            save_fee()
             assert state() == original
             page.set_viewport_size({'width': 1440, 'height': 1000})
             scroll.evaluate('(el) => { el.scrollLeft=0; el.scrollTop=0; }')
-            record('費用設定可展開／收合，收合後 checkbox 正常，資料不變；待處理入口會自動展開並聚焦金額')
+            record('寬版獨立視窗可編輯，儲存才套用，取消與 Esc 不改資料；待處理入口直接開啟並聚焦金額')
 
             page.get_by_role('button', name='＋ 新增費用', exact=True).click()
-            added = state()['days'][0]['expenses'][-1]['id']
+            added = page.locator('#expense-dialog').get_attribute('data-expense')
             field('expense-name', added).fill('加點早餐')
             field('category', added).select_option('breakfast')
             set_fee(added, '30', [a, b], b)
             share(added, a, '15.0')
             expect(part(e1['breakfast'], last)).to_be_checked()
+            open_fee(added)
             dialog(lambda: page.locator(f'[data-action="delete-expense"][data-expense="{added}"]').click(), False)
             assert len(state()['days'][0]['expenses']) == 8
             dialog(lambda: page.locator(f'[data-action="delete-expense"][data-expense="{added}"]').click())
@@ -366,7 +407,7 @@ def main():
             record('真正下載 JSON 備份；不合法 JSON／版本／名單匯入失敗且不覆蓋原資料')
 
             tab(d1['id'])
-            field('amount', e1['breakfast']).fill('200')
+            set_field('amount', e1['breakfast'], '200')
             modified = state()
             dialog(lambda: page.locator('#import-file').set_input_files(str(backup)), False)
             assert state() == modified
@@ -382,7 +423,7 @@ def main():
             # Serve the exported file from memory, without placing any personal data in the repo.
             context.route('**/shared-view.html', lambda r: r.fulfill(path=str(readonly_file), content_type='text/html; charset=utf-8'))
             tab(d1['id'])
-            field('amount', e1['breakfast']).fill('999')
+            set_field('amount', e1['breakfast'], '999')
             editor_state = state()
             shared = context.new_page()
             shared.goto(url.replace('index.html', 'shared-view.html'))
@@ -393,7 +434,11 @@ def main():
             assert shared.locator('.overview-table').inner_text() == overview
             expect(shared.locator('#save-status')).to_contain_text('唯讀快照 · 更新於')
             shared.locator('#tab-' + d1['id']).click()
+            shared.locator('#edit-' + e1['breakfast']).click()
             expect(shared.locator('#amount-' + e1['breakfast'])).to_have_value('100.1')
+            assert shared.locator('#expense-dialog input:not(:disabled),#expense-dialog select:not(:disabled)').count() == 0
+            expect(shared.locator('#expense-dialog [data-action="save-expense"]')).to_have_count(0)
+            shared.get_by_role('button', name='關閉', exact=True).click()
             assert shared.locator('#view input:not(:disabled),#view select:not(:disabled)').count() == 0
             expect(shared.locator('#part-' + e1['breakfast'] + '-' + a)).to_be_checked()
             expect(shared.locator('[data-action="add-expense"]')).to_be_hidden()
@@ -419,6 +464,21 @@ def main():
             expect(part(e1['breakfast'], a)).not_to_be_checked()
             part(e1['breakfast'], a).check()
             expect(part(e1['breakfast'], a)).to_be_checked()
+            open_fee(e1['breakfast'])
+            expect(page.locator('#expense-dialog')).to_be_visible()
+            assert page.locator('#expense-dialog').bounding_box()['width'] == 390
+            assert page.locator('#expense-dialog').bounding_box()['height'] <= 845
+            assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
+            draft_a = page.locator(f'#expense-dialog [data-field="draft-participation"][data-person="{a}"]')
+            draft_a.uncheck()
+            expect(page.locator(f'[data-draft-share="{a}"]')).to_have_text('0.0 元')
+            expect(page.locator('#expense-preview')).to_contain_text('分攤 3 人')
+            assert part(e1['breakfast'], a).is_checked(), 'Matrix updates only after Save'
+            page.screenshot(path=str(artifacts / 'mobile-expense-dialog.png'), full_page=True)
+            save_fee()
+            expect(part(e1['breakfast'], a)).not_to_be_checked()
+            part(e1['breakfast'], a).check()
+            record('390px 手機使用全螢幕編輯，視窗內 checkbox 即時預覽，儲存後才更新表格')
             page.screenshot(path=str(artifacts / 'mobile-daily.png'), full_page=True)
             tab('overview')
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
