@@ -260,16 +260,56 @@ def main():
             expect(part(e1['breakfast'], a)).to_be_checked()
             record('改姓名同步顯示，分攤、代墊、參與及司機 ID 不變')
 
-            # Both sticky axes are verified from browser layout measurements.
+            # Only the compact title sticks; the large editing form must scroll away.
             scroll = page.locator('#daily-scroll')
             scroll.evaluate('(el) => { el.scrollLeft=0; el.scrollTop=0; }')
-            x = page.locator('tbody .name-cell').first.bounding_box()['x']
-            y = page.locator('#expense-' + e1['breakfast']).bounding_box()['y']
-            scroll.evaluate('(el) => { el.scrollLeft=450; el.scrollTop=550; }')
-            assert abs(page.locator('tbody .name-cell').first.bounding_box()['x'] - x) < 2
-            assert abs(page.locator('#expense-' + e1['breakfast']).bounding_box()['y'] - y) < 2
+            x = page.locator('#daily-scroll tbody .name-cell').first.bounding_box()['x']
+            editor_height = page.locator('#daily-expense-settings').bounding_box()['height']
+            scroll.evaluate('(el, top) => { el.scrollLeft=450; el.scrollTop=top; }', editor_height + 100)
+            y = page.locator('#title-' + e1['breakfast']).bounding_box()['y']
+            assert page.locator('#expense-' + e1['breakfast']).bounding_box()['y'] < scroll.bounding_box()['y'] - 100
+            scroll.evaluate('(el) => { el.scrollTop+=200; }')
+            assert abs(page.locator('#daily-scroll tbody .name-cell').first.bounding_box()['x'] - x) < 2
+            assert abs(page.locator('#title-' + e1['breakfast']).bounding_box()['y'] - y) < 2
+            assert page.locator('.daily-compact-row').bounding_box()['height'] <= 64
+            # At a smaller laptop viewport, enough space remains for several participant rows.
+            page.set_viewport_size({'width': 1280, 'height': 720})
+            scroll.evaluate('(el, top) => { el.scrollLeft=0; el.scrollTop=top; el.scrollIntoView({block:"center"}); }', editor_height + 300)
+            visible_rows = scroll.evaluate("""el => {
+                const box=el.getBoundingClientRect(), head=el.querySelector('.daily-compact-row').getBoundingClientRect();
+                return [...el.querySelectorAll('tbody tr')].filter(row=>{
+                    const r=row.getBoundingClientRect();return r.top>=head.bottom&&r.bottom<=box.bottom;
+                }).length;
+            }""")
+            assert visible_rows >= 4, visible_rows
+            page.screenshot(path=str(artifacts / 'laptop-daily-scrolled.png'), full_page=True)
+            record('費用編輯區會隨捲動移開，僅固定不足 64px 的精簡標題；720px 高度可完整看到至少四列人員')
+
+            original = state()
+            summary_before = page.evaluate('(s) => TripCore.summarize(s)', original)
+            page.get_by_role('button', name='收合費用設定', exact=True).click()
+            expect(page.locator('#daily-expense-settings')).to_be_hidden()
+            assert state() == original
+            assert page.locator('.daily-compact-row').bounding_box()['y'] - scroll.bounding_box()['y'] < 2
+            part(e1['breakfast'], a).uncheck()
+            part(e1['breakfast'], a).check()
+            assert page.evaluate('(s) => TripCore.summarize(s)', state()) == summary_before
+            original = state()
+            page.screenshot(path=str(artifacts / 'laptop-daily-collapsed.png'), full_page=True)
+            page.get_by_role('button', name='展開費用設定', exact=True).click()
+            expect(page.locator('#daily-expense-settings')).to_be_visible()
+            amount_before = field('amount', e1['breakfast']).input_value()
+            field('amount', e1['breakfast']).fill('-1')
+            page.get_by_role('button', name='收合費用設定', exact=True).click()
+            tab('overview')
+            page.locator(f'[data-action="goto-expense"][data-expense="{e1["breakfast"]}"]').click()
+            expect(page.locator('#daily-expense-settings')).to_be_visible()
+            expect(field('amount', e1['breakfast'])).to_be_focused()
+            field('amount', e1['breakfast']).fill(amount_before)
+            assert state() == original
+            page.set_viewport_size({'width': 1440, 'height': 1000})
             scroll.evaluate('(el) => { el.scrollLeft=0; el.scrollTop=0; }')
-            record('捲動時姓名欄固定在左，費用標題固定在上')
+            record('費用設定可展開／收合，收合後 checkbox 正常，資料不變；待處理入口會自動展開並聚焦金額')
 
             page.get_by_role('button', name='＋ 新增費用', exact=True).click()
             added = state()['days'][0]['expenses'][-1]['id']

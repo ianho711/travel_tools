@@ -93,6 +93,11 @@ thead .driver-cell{z-index:5;background:#eaf0e8}
 .switch{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--pale);border-radius:8px}
 .daily-note{font-size:13px;color:var(--muted);margin-bottom:15px}
 .expense-head{min-width:238px;width:238px;text-align:left;vertical-align:top;padding:13px}
+.daily-editor-row>th{position:relative;top:auto;z-index:1}
+.daily-editor-row>.name-cell{position:sticky;top:auto;z-index:2;width:calc(var(--name) + var(--driver));min-width:calc(var(--name) + var(--driver));max-width:calc(var(--name) + var(--driver));vertical-align:top;padding-top:18px}
+.expense-title{min-width:238px;width:238px;text-align:left;padding:8px 13px;line-height:1.4}
+.compact-expense-name{display:block;max-width:212px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.daily-compact-row .driver-cell{white-space:nowrap;font-size:12px}
 .expense-head .field{display:block;margin-bottom:8px}
 .expense-head .field>span{display:block;font-size:11px;color:var(--muted);margin-bottom:2px}
 .expense-head input,.expense-head select{width:100%;font-size:13px;font-weight:400}
@@ -494,7 +499,7 @@ globalThis.TripExport=TripExport;
   const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const money=units=>(units/10).toLocaleString('zh-TW',{minimumFractionDigits:1,maximumFractionDigits:1});
   const snapshotElement=$('trip-snapshot'), readOnly=Boolean(snapshotElement);
-  let state=C.createTrip(), active='overview', storageOk=true, initialMessage='', snapshotTime='', selectedPerson='';
+  let state=C.createTrip(), active='overview', storageOk=true, initialMessage='', snapshotTime='', selectedPerson='', showExpenseSettings=true;
   if(readOnly) {
     try {
       const snapshot=JSON.parse(snapshotElement.textContent);
@@ -592,6 +597,7 @@ globalThis.TripExport=TripExport;
         <div class="select-tools"><button type="button" class="small" data-action="select-all" data-expense="${e.id}">全選</button><button type="button" class="small" data-action="select-none" data-expense="${e.id}">取消全選</button></div>
         <div class="expense-status" role="status">${r.issues.map(i=>esc(i.message)).join('<br>')}</div></th>`;
     }).join('');
+    const titles=d.expenses.map(e=>{const r=results.get(e.id);return `<th scope="col" class="expense-title" id="title-${e.id}"><span class="compact-expense-name" title="${esc(e.name||'未命名費用')}">${esc(e.name||'未命名費用')}</span><span class="tiny muted">${r.amountValid?money(r.units)+' 元':'金額待修正'} · ${r.blocked?0:r.eligible.length} 人${r.issues.length?' · 待處理':''}</span></th>`;}).join('');
     const rows=state.members.map((m,i)=>`<tr><th scope="row" class="name-cell"><span class="person-label ${C.isNamed(m)?'':'muted'}">${esc(memberName(m))}</span><span class="person-index">${i+1} ${!C.isNamed(m)?'· 不列入分攤':''}</span></th>
       <td class="driver-cell"><label><input type="checkbox" id="driver-${d.id}-${m.id}" data-field="driver" data-person="${m.id}" aria-label="${esc(memberName(m))} 當日司機" ${d.drivers.includes(m.id)?'checked':''} ${!d.useCar||!C.isNamed(m)?'disabled':''}><span class="sr-only">當日司機</span></label></td>
       ${d.expenses.map(e=>{const r=results.get(e.id), exempt=C.isCar(e)&&d.useCar&&d.drivers.includes(m.id)&&C.isNamed(m);return `<td><div class="participation"><label><input type="checkbox" id="part-${e.id}-${m.id}" data-field="participation" data-person="${m.id}" data-expense="${e.id}" aria-label="${esc(memberName(m))} 參與 ${esc(e.name||'未命名費用')} 費用 ${d.expenses.indexOf(e)+1}" ${e.participantIds.includes(m.id)?'checked':''} ${C.isNamed(m)?'':'disabled'}></label><div><span class="amount-label money ${r.shares[m.id]?'':'cell-zero'}" data-share="${e.id}-${m.id}">${money(r.shares[m.id])}</span><span class="cell-note">${exempt?'司機免車資':C.isCar(e)&&!d.useCar?'當日未用車':!C.isNamed(m)?'待填姓名':r.blocked?'待處理':''}</span></div></div></td>`;}).join('')}</tr>`).join('');
@@ -600,7 +606,7 @@ globalThis.TripExport=TripExport;
       <div class="section-head"><p class="muted">${readOnly?'檢視當日參與者、司機與分攤結果。':'每天獨立勾選參與者與司機。'}</p><button type="button" class="primary" data-action="add-expense" ${d.expenses.length>=C.LIMITS.expenses?'disabled':''}>＋ 新增費用</button></div>
       <p class="daily-note">司機只免當日油錢與租車費，仍分攤已勾選的餐費、停車費與其他費用。全選／取消全選只操作具名成員。</p>
       ${issues?`<div class="warn" id="daily-warning">當日有 <strong>${issues}</strong> 項待處理，請查看各費用欄的提示。已輸入的費用會保留；待處理的車資暫不分攤。</div>`:''}
-      <section class="panel"><div class="table-caption"><h3>每日明細</h3><span class="muted tiny">可左右與上下捲動 · 名稱與費用標題固定</span></div><div class="table-scroll" id="daily-scroll"><table aria-label="每日費用參與與分攤"><thead><tr><th scope="col" class="name-cell corner">旅伴</th><th scope="col" class="driver-cell">當日<br>司機</th>${heads}</tr></thead><tbody>${rows}</tbody><tfoot><tr><th scope="row" class="name-cell">已分攤合計</th><td class="driver-cell"></td>${d.expenses.map(e=>`<td class="money" data-expense-total="${e.id}">${money(results.get(e.id).allocated)}</td>`).join('')}</tr></tfoot></table></div></section>
+      <section class="panel"><div class="table-caption"><div><h3>每日明細</h3><span class="muted tiny">姓名與精簡標題固定；費用設定可收合</span></div><button type="button" class="small" data-action="toggle-expense-settings" aria-expanded="${showExpenseSettings}" aria-controls="daily-expense-settings">${showExpenseSettings?'收合費用設定':'展開費用設定'}</button></div><div class="table-scroll" id="daily-scroll"><table aria-label="每日費用參與與分攤"><thead><tr id="daily-expense-settings" class="daily-editor-row" ${showExpenseSettings?'':'hidden'}><th class="name-cell" colspan="2">費用設定<p class="tiny muted">填寫後可收合，或向下捲動勾選人員。</p></th>${heads}</tr><tr class="daily-compact-row"><th scope="col" class="name-cell corner">旅伴</th><th scope="col" class="driver-cell">當日司機</th>${titles}</tr></thead><tbody>${rows}</tbody><tfoot><tr><th scope="row" class="name-cell">已分攤合計</th><td class="driver-cell"></td>${d.expenses.map(e=>`<td class="money" data-expense-total="${e.id}">${money(results.get(e.id).allocated)}</td>`).join('')}</tr></tfoot></table></div></section>
       ${!d.expenses.length?'<div class="empty">當天尚無費用，按「新增費用」加入。</div>':''}
       <div class="day-footer"><p class="muted tiny">當日支出 <strong class="money">${money(total)}</strong> 元 · 已分攤 <strong class="money">${money(allocated)}</strong> 元 · 差額 <strong class="money">${money(total-allocated)}</strong> 元</p><button type="button" data-action="tab" data-tab="overview">查看整趟總覽 →</button></div>`;
   }
@@ -616,7 +622,7 @@ globalThis.TripExport=TripExport;
       document.querySelector('[data-action="add-day"]').hidden=true;
       $('save-status').textContent=`唯讀快照 · 更新於 ${snapshotTime}（台北時間）`;
       document.querySelectorAll('#view input,#view select').forEach(el=>{el.disabled=el.id!=='personal-person';});
-      document.querySelectorAll('#view button[data-action]').forEach(el=>{if(!['tab','goto-expense'].includes(el.dataset.action))el.hidden=true;});
+      document.querySelectorAll('#view button[data-action]').forEach(el=>{if(!['tab','goto-expense','toggle-expense-settings'].includes(el.dataset.action))el.hidden=true;});
     }
     for(const [pid,x,y] of positions){const el=pid&&$(pid);if(el){el.scrollLeft=x;el.scrollTop=y;}}
     if(focusId&&$(focusId)){const el=$(focusId);el.focus({preventScroll:true});if(selection)try{el.setSelectionRange(...selection);}catch{}}
@@ -669,10 +675,11 @@ globalThis.TripExport=TripExport;
   document.addEventListener('click',event=>{
     const button=event.target.closest('button[data-action]');if(!button||button.disabled)return;
     const action=button.dataset.action, d=currentDay(), eid=button.dataset.expense;
-    if(readOnly&&!['tab','goto-expense'].includes(action))return;
+    if(readOnly&&!['tab','goto-expense','toggle-expense-settings'].includes(action))return;
+    if(action==='toggle-expense-settings'){showExpenseSettings=!showExpenseSettings;render();if($('daily-scroll'))$('daily-scroll').scrollTop=0;return;}
     if(action==='tab'){selectTab(button.dataset.tab);return;}
     if(action==='open-roster'){$('roster').open=true;$('roster').scrollIntoView({block:'start'});$('name-'+state.members[0].id)?.focus();return;}
-    if(action==='goto-expense'){if(button.dataset.person)selectedPerson=button.dataset.person;if(button.dataset.ledger){const source=state.ledger.find(e=>e.id===button.dataset.ledger);if(source)selectedPerson=source.personId;}selectTab(button.dataset.tab);$(button.dataset.ledger?'ledger-amount-'+button.dataset.ledger:'amount-'+eid)?.focus();return;}
+    if(action==='goto-expense'){if(eid)showExpenseSettings=true;if(button.dataset.person)selectedPerson=button.dataset.person;if(button.dataset.ledger){const source=state.ledger.find(e=>e.id===button.dataset.ledger);if(source)selectedPerson=source.personId;}selectTab(button.dataset.tab);$(button.dataset.ledger?'ledger-amount-'+button.dataset.ledger:'amount-'+eid)?.focus();return;}
     if(action==='add-ledger'){
       const member=state.members.find(m=>m.id===selectedPerson);if(!member||!C.isNamed(member)||state.ledger.length>=C.LIMITS.ledger)return;
       const entry=C.ledgerEntry(selectedPerson);state.ledger.push(entry);commit();$('ledger-description-'+entry.id).focus();return;
@@ -732,7 +739,7 @@ globalThis.TripExport=TripExport;
     }
     if(action==='add-expense'){
       if(d.expenses.length>=C.LIMITS.expenses)return;
-      const e=C.expense();d.expenses.push(e);commit();$('expense-name-'+e.id).focus();return;
+      const e=C.expense();d.expenses.push(e);showExpenseSettings=true;commit();$('expense-name-'+e.id).focus();return;
     }
     const e=d.expenses.find(e=>e.id===eid);if(!e)return;
     if(action==='delete-expense'){
