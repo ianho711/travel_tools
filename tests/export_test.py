@@ -93,8 +93,8 @@ def main():
         assert units(ov['J3'].value)==summary['cashExpense']
         assert units(ov['L3'].value)==summary['income']
         assert summary['cashExpense']-summary['income']==summary['total']
-        assert 'v1.8.0' in ov['A1'].value
-        assert wb['使用說明']['B3'].value=='v1.8.0'
+        assert 'v1.8.1' in ov['A1'].value
+        assert wb['使用說明']['B3'].value=='v1.8.1'
         assert units(ov['D3'].value)==summary['allocated']
         assert units(ov['F3'].value)==summary['difference']
         assert ov['H3'].value==len(summary['issues'])

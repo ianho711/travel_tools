@@ -60,8 +60,8 @@ def main():
 
             context.route('**/*', route_request)
             page.goto(url)
-            expect(page).to_have_title('旅伴帳本 v1.8.0｜旅遊費用分攤')
-            expect(page.locator('#app-version')).to_have_text('v1.8.0')
+            expect(page).to_have_title('旅伴帳本 v1.8.1｜旅遊費用分攤')
+            expect(page.locator('#app-version')).to_have_text('v1.8.1')
             expect(page.get_by_role('tab')).to_have_count(7)
             expect(page.locator('#total-expense')).to_have_text('0.0元')
             expect(page.locator('#roster-summary')).to_contain_text('0 位已填姓名 / 25 個名額')
@@ -488,7 +488,7 @@ def main():
             editor_state = state()
             shared = context.new_page()
             shared.goto(url.replace('index.html', 'shared-view.html'))
-            expect(shared).to_have_title('旅伴帳本 v1.8.0｜唯讀旅遊費用')
+            expect(shared).to_have_title('旅伴帳本 v1.8.1｜唯讀旅遊費用')
             expect(shared.locator('.tools')).to_be_hidden()
             expect(shared.locator('#roster')).to_be_hidden()
             expect(shared.locator('[data-action="add-day"]')).to_be_hidden()
@@ -957,9 +957,17 @@ def main():
             expect(page.locator('#ledger-direction-' + payment)).to_be_disabled()
             expect(page.locator('#ledger-direction-' + payment)).to_have_value('minus')
             expect(page.locator('[data-personal="receive"]')).to_have_text('3,260.0 元')
+            expect(page.locator('#personal-refund-note')).to_contain_text('甲旅伴尚待收回 3,260.0 元')
+            expect(page.locator('#personal-scroll')).to_contain_text('繳款人：甲旅伴 → 主辦人（預收團費）')
+            assert not any(e['type']=='refund' for e in state()['ledger'])
+            before_refund=state();page.reload();assert state()==before_refund
+            expect(page.locator('#personal-refund-note')).to_contain_text('不要修改原本的已繳款')
+            record('預繳10000但只負擔6740，清楚顯示繳款人與待退3260；刷新保留，未實際退款不會自動新增退款')
             refund = add_entry('refund', '已退回差額', '3260')
             expect(page.locator('[data-personal="receive"]')).to_have_text('0.0 元')
             expect(page.locator('[data-personal="pay"]')).to_have_text('0.0 元')
+            expect(page.locator('#personal-refund-note')).to_have_count(0)
+            expect(page.locator('#personal-scroll')).to_contain_text('主辦人 → 甲旅伴（已退款）')
             tab('overview')
             expect(page.locator('#total-expense')).to_have_text('6,740.0元')
             expect(page.locator('#collected-total')).to_contain_text('6,740.0 元')
@@ -1347,18 +1355,63 @@ def main():
             assert report['整趟車資']['J4'].value==5250
             assert report['整趟總覽']['J3'].value==6310 and report['整趟總覽']['L3'].value==400
             assert report['個人結算']['H4'].value==6010 and report['個人結算']['M4'].value==1654.3
-            assert 'v1.8.0' in report['整趟總覽']['A1'].value
-            assert report['使用說明']['B3'].value=='v1.8.0'
+            assert 'v1.8.1' in report['整趟總覽']['A1'].value
+            assert report['使用說明']['B3'].value=='v1.8.1'
             with page.expect_download() as info:page.get_by_role('button',name='匯出唯讀網頁',exact=True).click()
             income_view=artifacts/'rental-income-view.html';info.value.save_as(income_view)
             context.route('**/rental-income-view.html',lambda r:r.fulfill(path=str(income_view),content_type='text/html; charset=utf-8'))
             ir=context.new_page();ir.goto(url.replace('index.html','rental-income-view.html'))
-            expect(ir).to_have_title('旅伴帳本 v1.8.0｜唯讀旅遊費用')
-            expect(ir.locator('#app-version')).to_have_text('v1.8.0')
+            expect(ir).to_have_title('旅伴帳本 v1.8.1｜唯讀旅遊費用')
+            expect(ir.locator('#app-version')).to_have_text('v1.8.1')
             expect(ir.locator('#total-income')).to_have_text('400.0')
             ir.locator('#tab-personal').click();ir.locator('#personal-person').select_option(fa)
             expect(ir.locator('[data-personal="advanced"]')).to_have_text('6,010.0 元');ir.close()
-            record('收入與全額代墊可保存還原及匯出，頁面／分頁標題／唯讀網頁／XLSX一致顯示v1.8.0')
+            record('收入與全額代墊可保存還原及匯出，頁面／分頁標題／唯讀網頁／XLSX一致顯示v1.8.1')
+
+            # Names are visible at the original costs and the prepaid group-payment row.
+            current=state();rent_cost=next(e for e in current['carExpenses'] if e['category']=='rental')
+            gas_cost=next(e for e in current['carExpenses'] if e['category']=='fuel')
+            tab('vehicles')
+            expect(page.locator(f'[data-payer="{rent_cost["id"]}"]')).to_have_text('代墊：甲家庭改名')
+            expect(page.locator(f'[data-payer="{gas_cost["id"]}"]')).to_have_text('代墊：乙家庭')
+            old_name=current['members'][0]['name'];display_name='甲主辦人 & <同行>'
+            roster();page.locator('#name-'+fa).fill(display_name);roster(False)
+            expect(page.locator(f'[data-payer="{rent_cost["id"]}"]')).to_have_text('代墊：'+display_name)
+            tab(family_days[0]);meal_id=next(e['id'] for e in state()['days'][0]['expenses'] if e['category']=='breakfast')
+            expect(page.locator(f'[data-payer="{meal_id}"]')).to_have_text('代墊：'+display_name)
+            assert page.locator('.daily-compact-row').bounding_box()['height']<=64
+            tab('personal');page.locator('#personal-person').select_option(fa)
+            expect(page.locator('#personal-advance-person')).to_contain_text('代墊者：'+display_name)
+            expect(page.locator('#personal-advance-person')).to_contain_text('6,010.0 元')
+            expect(page.locator('#personal-scroll')).to_contain_text('繳款人：'+display_name+' → 主辦人（預收團費）')
+            assert page.locator('#personal-advances').evaluate('(el)=>Boolean(el.compareDocumentPosition(document.querySelector("#personal-scroll")) & Node.DOCUMENT_POSITION_FOLLOWING)')
+            expect(page.locator('[data-personal="advanced"]')).to_have_text('6,010.0 元')
+            expect(page.locator('[data-personal="receive"]')).to_have_text('1,654.3 元')
+            page.screenshot(path=str(artifacts/'visible-payers-personal.png'),full_page=True)
+            roster();page.locator('#name-'+fa).fill('');roster(False);tab('vehicles')
+            expect(page.locator(f'[data-payer="{rent_cost["id"]}"]')).to_have_text('代墊：原代墊者未填姓名')
+            roster();page.locator('#name-'+fa).fill(old_name);roster(False)
+            page.locator(f'[data-action="edit-vehicle"][data-vehicle="{discount_vehicle}"]').click()
+            page.locator('#vehicle-rental-payer').select_option('');page.get_by_role('button',name='儲存車輛',exact=True).click()
+            expect(page.locator(f'[data-payer="{rent_cost["id"]}"]')).to_have_text('代墊：未指定代墊者')
+            page.locator(f'[data-action="edit-vehicle"][data-vehicle="{discount_vehicle}"]').click()
+            page.locator('#vehicle-rental-payer').select_option(fa);page.get_by_role('button',name='儲存車輛',exact=True).click()
+            assert state()==current
+            page.reload();expect(page.locator(f'[data-payer="{rent_cost["id"]}"]')).to_have_text('代墊：甲家庭改名')
+            with page.expect_download() as info:page.get_by_role('button',name='匯出唯讀網頁',exact=True).click()
+            payer_view=artifacts/'visible-payers-view.html';info.value.save_as(payer_view)
+            context.route('**/visible-payers-view.html',lambda r:r.fulfill(path=str(payer_view),content_type='text/html; charset=utf-8'))
+            pv=context.new_page();pv.goto(url.replace('index.html','visible-payers-view.html'));pv.locator('#tab-vehicles').click()
+            expect(pv.locator(f'[data-payer="{rent_cost["id"]}"]')).to_have_text('代墊：甲家庭改名')
+            pv.locator('#tab-personal').click();pv.locator('#personal-person').select_option(fa)
+            expect(pv.locator('#personal-advance-person')).to_contain_text('6,010.0 元');pv.close()
+            page.set_viewport_size({'width':390,'height':844});tab(family_days[0])
+            expect(page.locator(f'[data-payer="{meal_id}"]')).to_have_text('代墊：甲家庭改名')
+            assert page.locator('.daily-compact-row').bounding_box()['height']<=64
+            assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
+            page.screenshot(path=str(artifacts/'visible-payers-mobile.png'),full_page=True)
+            page.set_viewport_size({'width':1440,'height':1000})
+            record('租金／油錢／每日費用直接顯示代墊者，個人代墊明細前移；改名安全同步、空白未指定清楚提示，唯讀及手機正確且標題仍不超過64px')
 
             assert not errors, errors
             assert not external_requests, external_requests
