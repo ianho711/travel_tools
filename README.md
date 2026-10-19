@@ -10,7 +10,7 @@
 
 ## 開始使用
 
-1. [下載 index.html](https://github.com/ianho711/travel_tools/raw/refs/heads/main/index.html)，存到電腦後用瀏覽器開啟。GitHub 的檔案預覽頁不會直接執行 HTML。
+1. [下載 index.html](https://raw.githubusercontent.com/ianho711/travel_tools/main/index.html)，存到電腦後用瀏覽器開啟。GitHub 的檔案預覽頁不會直接執行 HTML。
 2. 展開「統一名單」填姓名。預設 30 個空白名額、10 天，可增減，初始沒有假支出。
 3. 切換每天分頁，點費用標題開啟獨立視窗，填名稱、類別、總金額及代墊者，按「儲存費用」。參與者可在視窗內或表格用真正的 checkbox 勾選。
 4. 交通費用分頁逐台填租金與油錢；設定一次每日搭車名單，依乘車人天分攤。
