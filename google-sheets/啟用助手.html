@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>旅伴帳本｜Google 試算表啟用助手</title>
+<style>body{font:16px/1.8 system-ui,sans-serif;background:#f4f5ef;color:#233d37;margin:0;padding:24px}main{max-width:840px;margin:auto;background:white;padding:28px;border-radius:16px}h1{font-size:26px}li{margin:14px 0}button,.button{font:inherit;display:inline-block;padding:10px 18px;border:0;border-radius:8px;background:#176253;color:white;text-decoration:none;cursor:pointer}textarea{width:100%;height:190px;box-sizing:border-box;font:12px/1.5 monospace;border:1px solid #b9c9bd;border-radius:8px}#status{color:#176253;font-weight:700}.note{background:#fff7df;padding:14px;border-radius:8px}</style></head><body><main>
+<h1>Google 試算表：你編輯，旅伴檢視</h1>
+<p>這個助手只協助你複製設定程式，不會自動讀取或上傳 Google Drive 資料。</p>
+<ol><li><a class="button" target="_blank" rel="noopener noreferrer" href="https://drive.google.com/drive/my-drive">開啟 Google Drive</a><br>在資料夾按「新增 → Google 試算表」，建立空白檔案。</li>
+<li>在新試算表按「擴充功能 → Apps Script」。按下面的按鈕複製程式，取代編輯器內的預設內容並儲存。<br><button type="button" id="copy">複製設定程式</button><p id="status" role="status"></p></li>
+<li>在函式下拉選單選 <strong>setupTravelSheet</strong>，按「執行」並完成 Google 授權。回到試算表重新整理，就會出現名單、10 天、總覽與原生核取方塊。</li>
+<li>按試算表右上角「共用」，將旅伴設為<strong>檢視者</strong>，你保留編輯權限。以後修改會自動儲存，旅伴可看到最新資料。</li></ol>
+<p class="note">若已上傳 XLSX，請先「另存為 Google 試算表」，再貼程式並執行同一函式。啟用會保留原有資料。這份工具不會替你更改資料夾的共用權限。</p>
+<details><summary>設定程式（無法自動複製時，可手動全選複製）</summary><textarea id="code" readonly aria-label="Google Apps Script 設定程式">/**
+ * 旅伴帳本 Google 試算表版。
+ * @OnlyCurrentDoc
+ * 貼到指定試算表的「擴充功能 → Apps Script」，執行 setupTravelSheet。
+ * 不使用 Drive API、不讀寫其他檔案、不發布網站。
+ */
+const TravelSheets = (() =&gt; {
+  const LIMITS = {members:100, days:31, expenses:30};
+  const CATEGORIES = {breakfast:&#x27;早餐&#x27;,lunch:&#x27;午餐&#x27;,dinner:&#x27;晚餐&#x27;,fuel:&#x27;油錢&#x27;,rental:&#x27;租車費&#x27;,parking:&#x27;停車費&#x27;,other:&#x27;其他&#x27;};
+  const META = &#x27;_旅伴設定&#x27;, CALC = &#x27;_計算&#x27;;
+  const id = prefix =&gt; prefix+&#x27;_&#x27;+Date.now().toString(36)+Math.random().toString(36).slice(2,11);
+  const col = n =&gt; {let s=&#x27;&#x27;;for(;n;n=Math.floor((n-1)/26))s=String.fromCharCode(65+(n-1)%26)+s;return s;};
+  const q = name =&gt; &quot;&#x27;&quot;+name.replace(/&#x27;/g,&quot;&#x27;&#x27;&quot;)+&quot;&#x27;!&quot;;
+  function expense(category=&#x27;other&#x27;) {return {id:id(&#x27;e&#x27;),name:CATEGORIES[category],category,amount:&#x27;&#x27;,payerId:null,participantIds:[]};}
+  function day(n) {return {id:id(&#x27;d&#x27;),name:&#x27;第 &#x27;+n+&#x27; 天&#x27;,useCar:false,drivers:[],expenses:Object.keys(CATEGORIES).map(expense)};}
+  function create(people=30,days=10) {return {version:1,members:Array.from({length:people},(_,i)=&gt;({id:&#x27;P&#x27;+String(i+1).padStart(3,&#x27;0&#x27;),name:&#x27;&#x27;})),days:Array.from({length:days},(_,i)=&gt;day(i+1))};}
+  function validate(input) {
+    const fail=m=&gt;{throw Error(m);}, seen=new Set();
+    const str=(x,n,label)=&gt;{if(typeof x!==&#x27;string&#x27;||x.length&gt;n)fail(label+&#x27;格式錯誤&#x27;);return x;};
+    const rid=x=&gt;{if(typeof x!==&#x27;string&#x27;||!/^[A-Za-z0-9_-]{1,80}$/.test(x)||seen.has(x))fail(&#x27;ID 錯誤或重複&#x27;);seen.add(x);return x;};
+    if(!input||input.version!==1||!Array.isArray(input.members)||input.members.length&lt;1||input.members.length&gt;LIMITS.members)fail(&#x27;須為版本 1、1–100 個名額&#x27;);
+    const members=input.members.map(m=&gt;({id:rid(m.id),name:str(m.name,80,&#x27;姓名&#x27;)})), ids=new Set(members.map(m=&gt;m.id));
+    const refs=a=&gt;{if(!Array.isArray(a)||a.length&gt;members.length||new Set(a).size!==a.length||a.some(x=&gt;!ids.has(x)))fail(&#x27;成員參照錯誤&#x27;);return [...a];};
+    if(!Array.isArray(input.days)||input.days.length&lt;1||input.days.length&gt;LIMITS.days)fail(&#x27;天數須為 1–31 天&#x27;);
+    const days=input.days.map(d=&gt;{
+      if(typeof d.useCar!==&#x27;boolean&#x27;||!Array.isArray(d.expenses)||d.expenses.length&gt;LIMITS.expenses)fail(&#x27;日期設定錯誤，每天至多 30 筆費用&#x27;);
+      return {id:rid(d.id),name:str(d.name,80,&#x27;日期名稱&#x27;),useCar:d.useCar,drivers:refs(d.drivers),expenses:d.expenses.map(e=&gt;{
+        if(!Object.prototype.hasOwnProperty.call(CATEGORIES,e.category)||(e.payerId!==null&amp;&amp;!ids.has(e.payerId)))fail(&#x27;類別或代墊者錯誤&#x27;);
+        return {id:rid(e.id),name:str(e.name,80,&#x27;費用名稱&#x27;),category:e.category,amount:str(e.amount,32,&#x27;金額&#x27;),payerId:e.payerId,participantIds:refs(e.participantIds)};
+      })};
+    });
+    return {version:1,members,days};
+  }
+  function build(input) {
+    const model=validate(input), n=model.members.length, first=12,last=first+n-1, hs=last+5, shareStart=hs+6;
+    const sheets=[];
+    function sheet(name,hidden=false) {
+      const s={name,hidden,cells:[],merges:[],checkboxes:[],validations:[],editable:[],widths:{},freezeRows:0,freezeColumns:0,hiddenRows:[],hiddenColumns:[]};
+      s.put=(r,c,v,kind=&#x27;value&#x27;)=&gt;{s.cells.push({r,c,v,kind});};
+      s.formula=(r,c,v)=&gt;s.put(r,c,&#x27;=&#x27;+v,&#x27;formula&#x27;);
+      s.text=(r,c,v)=&gt;s.put(r,c,v,&#x27;text&#x27;);
+      sheets.push(s);return s;
+    }
+    const overview=sheet(&#x27;整趟總覽&#x27;), roster=sheet(&#x27;成員名單&#x27;), daily=[];
+    roster.text(1,2,&#x27;統一成員名單&#x27;);roster.text(2,2,&#x27;只修改姓名；固定 ID 請勿修改。增減成員請用「旅伴帳本」選單。&#x27;);
+    [&#x27;固定 ID&#x27;,&#x27;姓名&#x27;,&#x27;使用說明&#x27;].forEach((v,i)=&gt;roster.text(4,i+1,v));
+    model.members.forEach((m,i)=&gt;{roster.text(5+i,1,m.id);roster.text(5+i,2,m.name);roster.text(5+i,3,&#x27;空白姓名不分攤&#x27;);});
+    roster.editable.push(`B5:B${n+4}`);roster.widths={A:150,B:180,C:440};roster.freezeRows=4;
+    const rosterIds=`&#x27;成員名單&#x27;!$A$5:$A$${n+4}`, rosterNames=`&#x27;成員名單&#x27;!$B$5:$B$${n+4}`;
+    const rosterName=pid=&gt;`IFERROR(INDEX(${rosterNames},MATCH(${pid},${rosterIds},0))&amp;&quot;&quot;,&quot;&quot;)`;
+    const dayUnitRefs=[],dayAllocatedRefs=[],statusRefs=[],detail=[];
+    model.days.forEach((d,di)=&gt;{
+      const s=sheet(&#x27;第 &#x27;+(di+1)+&#x27; 天&#x27;), sq=q(s.name);daily.push(s);
+      s.text(1,1,d.id);s.text(2,2,d.name);s.text(3,2,&#x27;當日用車&#x27;);s.put(3,3,d.useCar);s.checkboxes.push(&#x27;C3&#x27;);
+      s.text(2,4,&#x27;全選／取消全選：選取費用欄後使用「旅伴帳本」選單。&#x27;);
+      s.text(3,4,&#x27;司機只免當日油錢與租車費；餐費、停車費與其他正常分攤。&#x27;);
+      [&#x27;名稱&#x27;,&#x27;類別&#x27;,&#x27;總金額（元）&#x27;,&#x27;代墊者 ID&#x27;,&#x27;分攤人數&#x27;,&#x27;每人金額範圍&#x27;,&#x27;待處理提醒&#x27;].forEach((v,i)=&gt;s.text(i+4,2,v));
+      s.text(11,1,&#x27;固定 ID&#x27;);s.text(11,2,&#x27;姓名&#x27;);s.text(11,3,&#x27;當日司機&#x27;);
+      s.widths={A:280,B:160,C:92};s.freezeRows=11;s.freezeColumns=3;s.hiddenColumns=[&#x27;A&#x27;];s.hiddenRows=[[1,1],[hs,shareStart+n-1]];
+      s.editable.push(&#x27;B2&#x27;,&#x27;C3&#x27;,`C${first}:C${last}`);s.checkboxes.push(`C${first}:C${last}`);
+      s.formula(hs+3,3,`SUMPRODUCT(--(LEN(TRIM($B$${first}:$B$${last}))&gt;0),--($C$${first}:$C$${last}=TRUE))`);
+      model.members.forEach((m,i)=&gt;{
+        const r=first+i;s.text(r,1,m.id);s.formula(r,2,rosterName(&#x27;$A&#x27;+r));s.put(r,3,d.drivers.includes(m.id));
+        s.text(shareStart+i,1,m.id);
+      });
+      d.expenses.forEach((e,ei)=&gt;{
+        const ci=4+2*ei, c=col(ci), next=col(ci+1), amount=`${c}$6`, valid=`${c}$${hs+1}`, units=`${c}$${hs}`, count=`${c}$${hs+2}`, car=`${c}$${hs+4}`, drivers=`$C$${hs+3}`;
+        const named=`--(LEN(TRIM($B$${first}:$B$${last}))&gt;0)`, checked=`--(${c}$${first}:${c}$${last}=TRUE)`;
+        s.text(1,ci,e.id);s.text(4,ci,e.name);s.text(5,ci,CATEGORIES[e.category]);s.put(6,ci,e.amount===&#x27;&#x27;?&#x27;&#x27;:(/^(?:\d+(?:\.\d?)?|\.\d)$/.test(e.amount.trim())?Number(e.amount):e.amount),typeof e.amount===&#x27;string&#x27;&amp;&amp;!/^(?:\d+(?:\.\d?)?|\.\d)$/.test(e.amount.trim())?&#x27;text&#x27;:&#x27;value&#x27;);
+        s.text(6,ci+1,&#x27;元&#x27;);s.text(7,ci,e.payerId||&#x27;&#x27;);s.formula(7,ci+1,rosterName(c+&#x27;7&#x27;));
+        s.formula(hs+1,ci,`IF(LEN(TRIM(${amount}&amp;&quot;&quot;))=0,TRUE,IFERROR(AND(ISNUMBER(${amount}),${amount}&gt;=0,${amount}&lt;=100000000,ROUND(${amount},1)=${amount}),FALSE))`);
+        s.formula(hs,ci,`IFERROR(IF(${valid},ROUND(${amount}*10,0),0),0)`);
+        s.formula(hs+4,ci,`OR(${c}$5=&quot;油錢&quot;,${c}$5=&quot;租車費&quot;)`);
+        s.formula(hs+2,ci,`IF(${car},IF(AND($C$3=TRUE,${drivers}&gt;0),SUMPRODUCT(${named},${checked},--($C$${first}:$C$${last}&lt;&gt;TRUE)),0),SUMPRODUCT(${named},${checked}))`);
+        s.formula(8,ci,`IF(${valid},${count},0)`);s.text(8,ci+1,&#x27;人&#x27;);
+        s.formula(9,ci,`IF(OR(NOT(${valid}),${count}=0),&quot;暫不分攤&quot;,TEXT(QUOTIENT(${units},MAX(1,${count}))/10,&quot;0.0&quot;)&amp;IF(MOD(${units},MAX(1,${count}))&gt;0,&quot;–&quot;&amp;TEXT((QUOTIENT(${units},MAX(1,${count}))+1)/10,&quot;0.0&quot;),&quot;&quot;)&amp;&quot; 元／人&quot;)`);
+        const noCar=`AND(${units}&gt;0,${car},$C$3&lt;&gt;TRUE)`,missingDriver=`AND(${units}&gt;0,${car},$C$3=TRUE,${drivers}=0)`;
+        s.formula(10,ci,`IF(NOT(${valid}),&quot;金額須為非負數且最多一位小數。 &quot;,&quot;&quot;)&amp;IF(${noCar},&quot;未用車但有車資：保留金額，暫不分攤。 &quot;,&quot;&quot;)&amp;IF(${missingDriver},&quot;請設定具名司機；車資暫不分攤。 &quot;,&quot;&quot;)&amp;IF(AND(${units}&gt;0,${count}=0,NOT(${noCar}),NOT(${missingDriver})),&quot;沒有可分攤者。 &quot;,&quot;&quot;)&amp;IF(AND(${units}&gt;0,LEN(TRIM(${next}7))=0),&quot;請指定具名代墊者。&quot;,&quot;&quot;)`);
+        s.text(11,ci,&#x27;是否參與&#x27;);s.text(11,ci+1,&#x27;分攤（元）&#x27;);s.widths[c]=148;s.widths[next]=148;
+        s.checkboxes.push(`${c}${first}:${c}${last}`);s.editable.push(`${c}4:${next}4`,`${c}5:${next}5`,`${c}6`,`${c}7`,`${c}${first}:${c}${last}`);
+        s.validations.push({range:`${c}5:${next}5`,type:&#x27;list&#x27;,values:Object.values(CATEGORIES)});
+        s.validations.push({range:`${c}7`,type:&#x27;range&#x27;,source:rosterIds});
+        s.validations.push({range:`${c}6`,type:&#x27;amount&#x27;,formula:`OR(LEN(TRIM(${c}6&amp;&quot;&quot;))=0,IFERROR(AND(ISNUMBER(${c}6),${c}6&gt;=0,${c}6&lt;=100000000,ROUND(${c}6,1)=${c}6),FALSE))`});
+        [4,5,9,10].forEach(r=&gt;s.merges.push(`${c}${r}:${next}${r}`));
+        model.members.forEach((m,i)=&gt;{
+          const r=first+i,hr=shareStart+i;
+          const prefix=`--(LEN(TRIM($B$${first}:$B${r}))&gt;0),--(${c}$${first}:${c}${r}=TRUE)`;
+          const rank=`IF(${car},SUMPRODUCT(${prefix},--($C$${first}:$C${r}&lt;&gt;TRUE)),SUMPRODUCT(${prefix}))`;
+          s.put(r,ci,e.participantIds.includes(m.id));
+          s.formula(hr,ci,`IF(AND(${valid},${count}&gt;0,LEN(TRIM($B${r}))&gt;0,${c}${r}=TRUE,IF(${car},$C${r}&lt;&gt;TRUE,TRUE)),QUOTIENT(${units},MAX(1,${count}))+IF(${rank}&lt;=MOD(${units},MAX(1,${count})),1,0),0)`);
+          s.formula(r,ci+1,`${c}${hr}/10`);
+        });
+        s.formula(hs+5,ci,`SUM(${c}${shareStart}:${c}${shareStart+n-1})`);
+        s.formula(last+1,ci+1,`${c}${hs+5}/10`);
+        dayUnitRefs.push(`${sq}${c}${hs}`);dayAllocatedRefs.push(`${sq}${c}${hs+5}`);statusRefs.push(`${sq}${c}10`);
+        detail.push({day:`${sq}$B$2`,name:`${sq}${c}4`,amount:`${sq}${c}${hs}`,status:`${sq}${c}10`});
+      });
+      s.text(last+1,2,&#x27;已分攤合計（元）&#x27;);
+    });
+    const help=sheet(&#x27;使用說明&#x27;);help.widths={A:30,B:960};
+    const instructions=[
+      &#x27;旅伴帳本｜Google 試算表版&#x27;,
+      &#x27;在指定 Google Drive 資料夾建立／匯入此試算表；你保留編輯權限，旅伴設為檢視者。&#x27;,
+      &#x27;原生核取方塊：擴充功能 → Apps Script，貼入 Code.gs，執行 setupTravelSheet，授權目前試算表。&#x27;,
+      &#x27;1. 在「成員名單」修改姓名；固定 ID 不要改動。空白或空格姓名不參與分攤。&#x27;,
+      &#x27;2. 每日填費用名稱、類別、金額、代墊者 ID。ID 旁會顯示姓名，改名不會破壞關聯。&#x27;,
+      &#x27;3. 每筆各自勾選參與；用車日設定當日司機，可有多人。司機只免當天油錢／租車費。&#x27;,
+      &#x27;4. 正金額無分攤者、車資無司機或未用車皆會顯示提醒，暫不分攤該筆，金額保留。&#x27;,
+      &#x27;5. 金額以 0.1 元整數計算，尾差依名單固定順序每人加 0.1 元。停車費歸入其他費用。&#x27;,
+      &#x27;6. 人數、天數、費用增減與全選，請用「旅伴帳本」選單，不要自行插刪欄列或改隱藏 ID。&#x27;,
+      &#x27;7. 結構變更前會保留上一份資料備份；亦可匯出 JSON，與原網頁的資料格式相容。&#x27;,
+      &#x27;8. 目前上限 100 名額、31 天、每天 30 筆，預設 30 名額與 10 天，沒有示例支出。&#x27;,
+      &#x27;9. Google 原生格式會自動儲存並讓檢視者看到最新內容；不是網頁的手動唯讀快照。&#x27;,
+      &#x27;請在你指定的 Google Drive 費用資料夾建立／匯入試算表。&#x27;,
+      &#x27;這份檔案不會自動上傳；需由你在帳戶內建立／匯入。核取方塊啟用前 TRUE/FALSE 只是布林值。&#x27;
+    ];
+    instructions.forEach((t,i)=&gt;help.text(i+1,2,t));
+    const calc=sheet(CALC,true);[&#x27;日期 ID&#x27;,&#x27;成員 ID&#x27;,&#x27;餐費整數&#x27;,&#x27;油錢整數&#x27;,&#x27;租車整數&#x27;,&#x27;其他整數&#x27;,&#x27;總分攤整數&#x27;,&#x27;代墊整數&#x27;].forEach((v,i)=&gt;calc.text(1,i+1,v));
+    model.days.forEach((d,di)=&gt;model.members.forEach((m,i)=&gt;{
+      const r=2+di*n+i, sq=q(daily[di].name), hr=shareStart+i;
+      calc.text(r,1,d.id);calc.text(r,2,m.id);
+      const terms=(cats)=&gt;d.expenses.map((e,ei)=&gt;{const c=col(4+ei*2);return `IF(OR(${cats.map(t=&gt;`${sq}${c}$5=&quot;${t}&quot;`).join(&#x27;,&#x27;)}),${sq}${c}${hr},0)`;});
+      [[&#x27;早餐&#x27;,&#x27;午餐&#x27;,&#x27;晚餐&#x27;],[&#x27;油錢&#x27;],[&#x27;租車費&#x27;],[&#x27;停車費&#x27;,&#x27;其他&#x27;]].forEach((cats,k)=&gt;calc.formula(r,3+k,`SUM(${terms(cats).join(&#x27;,&#x27;)||&#x27;0&#x27;})`));
+      calc.formula(r,7,`SUM(C${r}:F${r})`);
+      const advances=d.expenses.map((e,ei)=&gt;{const c=col(4+ei*2);return `IF(${sq}${c}$7=$B${r},${sq}${c}${hs},0)`;});
+      calc.formula(r,8,`IF(LEN(TRIM(&#x27;成員名單&#x27;!$B${5+i}))=0,0,SUM(${advances.join(&#x27;,&#x27;)||&#x27;0&#x27;}))`);
+    }));
+    const calcEnd=1+model.days.length*n, sumRefs=refs=&gt;`SUM(${refs.join(&#x27;,&#x27;)||&#x27;0&#x27;})`, allTotal=sumRefs(dayUnitRefs), allAllocated=sumRefs(dayAllocatedRefs);
+    overview.text(1,2,&#x27;整趟費用總覽&#x27;);overview.text(2,2,&#x27;所有金額以元計，精確至 0.1 元；有待處理項目時請先補齊再結算。&#x27;);
+    overview.text(3,2,&#x27;全部支出&#x27;);overview.formula(3,3,`${allTotal}/10`);overview.text(3,5,&#x27;已分攤總額&#x27;);overview.formula(3,6,`${allAllocated}/10`);overview.text(3,8,&#x27;差額&#x27;);overview.formula(3,9,`(${allTotal}-${allAllocated})/10`);
+    overview.text(4,2,&#x27;待處理費用（筆）&#x27;);overview.formula(4,3,sumRefs(statusRefs.map(r=&gt;`IF(LEN(${r})&gt;0,1,0)`)));overview.text(4,5,&#x27;未指定代墊&#x27;);overview.formula(4,6,`(${allTotal}-SUM(&#x27;_計算&#x27;!H2:H${calcEnd}))/10`);
+    overview.text(5,2,&#x27;待處理費用的合法金額仍列支出與已代墊，但暫不分攤。請看下方核對清單。&#x27;);
+    [&#x27;固定 ID&#x27;,&#x27;姓名&#x27;,&#x27;餐費合計&#x27;,&#x27;油錢合計&#x27;,&#x27;租車費合計&#x27;,&#x27;其他費用合計&#x27;,&#x27;總分攤&#x27;,&#x27;已代墊&#x27;,&#x27;還要付&#x27;,&#x27;應收回&#x27;].forEach((v,i)=&gt;overview.text(7,i+1,v));
+    const sumPerson=(r,c)=&gt;`SUMIF(&#x27;_計算&#x27;!$B$2:$B$${calcEnd},$A${r},&#x27;_計算&#x27;!$${c}$2:$${c}$${calcEnd})`;
+    model.members.forEach((m,i)=&gt;{
+      const r=8+i;overview.text(r,1,m.id);overview.formula(r,2,rosterName(&#x27;$A&#x27;+r));
+      [&#x27;C&#x27;,&#x27;D&#x27;,&#x27;E&#x27;,&#x27;F&#x27;,&#x27;G&#x27;,&#x27;H&#x27;].forEach((c,k)=&gt;overview.formula(r,3+k,`${sumPerson(r,c)}/10`));
+      overview.formula(r,9,`MAX(0,(${sumPerson(r,&#x27;G&#x27;)}-${sumPerson(r,&#x27;H&#x27;)})/10)`);
+      overview.formula(r,10,`MAX(0,(${sumPerson(r,&#x27;H&#x27;)}-${sumPerson(r,&#x27;G&#x27;)})/10)`);
+    });
+    overview.text(n+8,2,&#x27;合計&#x27;);
+    for(let ci=3;ci&lt;=8;ci++)overview.formula(n+8,ci,`SUM(&#x27;_計算&#x27;!${col(ci)}2:${col(ci)}${calcEnd})/10`);
+    overview.formula(n+8,9,`SUM(${model.members.map((m,i)=&gt;`MAX(0,${sumPerson(8+i,&#x27;G&#x27;)}-${sumPerson(8+i,&#x27;H&#x27;)})`).join(&#x27;,&#x27;)})/10`);
+    overview.formula(n+8,10,`SUM(${model.members.map((m,i)=&gt;`MAX(0,${sumPerson(8+i,&#x27;H&#x27;)}-${sumPerson(8+i,&#x27;G&#x27;)})`).join(&#x27;,&#x27;)})/10`);
+    overview.text(n+11,2,&#x27;費用核對清單（同筆多個提醒計為一筆待處理）&#x27;);[&#x27;日期&#x27;,&#x27;費用&#x27;,&#x27;總金額&#x27;,&#x27;待處理提醒&#x27;].forEach((v,i)=&gt;overview.text(n+12,i+2,v));
+    detail.forEach((x,i)=&gt;{const r=n+13+i;overview.formula(r,2,x.day);overview.formula(r,3,x.name);overview.formula(r,4,x.amount+&#x27;/10&#x27;);overview.formula(r,5,x.status);overview.merges.push(`E${r}:J${r}`);});
+    overview.freezeRows=7;overview.freezeColumns=2;overview.widths={A:280,B:160,C:125,D:125,E:125,F:145,G:125,H:125,I:125,J:125};overview.hiddenColumns=[&#x27;A&#x27;];
+    const meta=sheet(META,true),metadata={schema:1,model,daySheets:daily.map(s=&gt;({dayId:model.days[daily.indexOf(s)].id,name:s.name}))};
+    meta.text(1,1,&#x27;TRAVEL_SHEETS_V1&#x27;);const text=JSON.stringify(metadata);for(let i=0;i&lt;text.length;i+=30000)meta.text(2+i/30000,1,text.slice(i,i+30000));
+    return {model,sheets,n,first,last,hs,shareStart,metadata};
+  }
+  return {LIMITS,CATEGORIES,META,CALC,col,q,expense,day,create,validate,build};
+})();
+
+function onOpen() {
+  SpreadsheetApp.getUi().createMenu(&#x27;旅伴帳本&#x27;)
+    .addItem(&#x27;啟用／修復核取方塊&#x27;,&#x27;setupTravelSheet&#x27;)
+    .addSeparator().addItem(&#x27;新增成員&#x27;,&#x27;addTravelMember&#x27;).addItem(&#x27;刪除成員（輸入固定 ID）&#x27;,&#x27;deleteTravelMember&#x27;)
+    .addItem(&#x27;新增一天&#x27;,&#x27;addTravelDay&#x27;).addItem(&#x27;刪除目前日期&#x27;,&#x27;deleteTravelDay&#x27;)
+    .addItem(&#x27;新增本日費用&#x27;,&#x27;addTravelExpense&#x27;).addItem(&#x27;刪除選取費用&#x27;,&#x27;deleteTravelExpense&#x27;)
+    .addSeparator().addItem(&#x27;本欄費用全選&#x27;,&#x27;selectTravelExpense&#x27;).addItem(&#x27;本欄費用取消全選&#x27;,&#x27;unselectTravelExpense&#x27;)
+    .addSeparator().addItem(&#x27;匯出 JSON 備份&#x27;,&#x27;exportTravelBackup&#x27;).addItem(&#x27;匯入 JSON 備份&#x27;,&#x27;importTravelBackup&#x27;)
+    .addItem(&#x27;還原上一次結構變更前資料&#x27;,&#x27;restoreTravelBackup&#x27;).addItem(&#x27;重設全部&#x27;,&#x27;resetTravelSheet&#x27;).addToUi();
+}
+
+function travelMeta_(ss) {
+  const sheet=ss.getSheetByName(TravelSheets.META);
+  if(!sheet||sheet.getRange(&#x27;A1&#x27;).getValue()!==&#x27;TRAVEL_SHEETS_V1&#x27;)return null;
+  const meta=JSON.parse(sheet.getRange(2,1,Math.max(1,sheet.getLastRow()-1),1).getValues().map(r=&gt;r[0]).join(&#x27;&#x27;));
+  if(meta.schema!==1)throw Error(&#x27;不支援的設定版本&#x27;);TravelSheets.validate(meta.model);return meta;
+}
+function travelDaySheet_(ss,entry) {
+  const byId=entry.sheetId===undefined?null:ss.getSheetById(entry.sheetId);
+  const sheet=(byId&amp;&amp;byId.getRange(&#x27;A1&#x27;).getValue()===entry.dayId)?byId:ss.getSheetByName(entry.name);
+  if(!sheet||sheet.getRange(&#x27;A1&#x27;).getValue()!==entry.dayId)throw Error(&#x27;找不到日期分頁，請勿刪除隱藏 ID。&#x27;);
+  return sheet;
+}
+function readTravelModel_(ss) {
+  const meta=travelMeta_(ss);if(!meta)throw Error(&#x27;請先執行 setupTravelSheet&#x27;);
+  const model=JSON.parse(JSON.stringify(meta.model));
+  const roster=ss.getSheetByName(&#x27;成員名單&#x27;);if(!roster)throw Error(&#x27;找不到成員名單，請勿改名此分頁。&#x27;);
+  const names=roster.getRange(5,1,model.members.length,2).getValues();
+  model.members=names.map(r=&gt;({id:String(r[0]),name:String(r[1])}));
+  const reverse=Object.fromEntries(Object.entries(TravelSheets.CATEGORIES).map(([k,v])=&gt;[v,k]));
+  model.days=model.days.map(d=&gt;{
+    const sheet=travelDaySheet_(ss,meta.daySheets.find(x=&gt;x.dayId===d.id));
+    const columns=3+2*d.expenses.length,rows=sheet.getRange(1,1,12+model.members.length,Math.max(3,columns)).getValues();
+    d.name=String(rows[1][1]);d.useCar=rows[2][2]===true;
+    d.drivers=rows.slice(11,11+model.members.length).filter(r=&gt;r[2]===true).map(r=&gt;String(r[0]));
+    d.expenses=d.expenses.map((e,i)=&gt;{
+      const c=3+i*2,category=reverse[rows[4][c]];
+      if(!category)throw Error(&#x27;費用類別必須使用下拉選單的類別。&#x27;);
+      return {id:String(rows[0][c]),name:String(rows[3][c]),category,amount:String(rows[5][c]),payerId:rows[6][c]===&#x27;&#x27;?null:String(rows[6][c]),participantIds:rows.slice(11,11+model.members.length).filter(r=&gt;r[c]===true).map(r=&gt;String(r[0]))};
+    });return d;
+  });return TravelSheets.validate(model);
+}
+function writeTravelBackup_(ss,model) {
+  let s=ss.getSheetByName(&#x27;_上次資料備份&#x27;);
+  if(s&amp;&amp;s.getRange(&#x27;A1&#x27;).getValue()!==&#x27;TRAVEL_BACKUP_V1&#x27;)throw Error(&#x27;「_上次資料備份」已有其他資料，請先更名；未覆寫原內容。&#x27;);
+  if(!s)s=ss.insertSheet(&#x27;_上次資料備份&#x27;);s.clear();s.getRange(&#x27;A1&#x27;).setValue(&#x27;TRAVEL_BACKUP_V1&#x27;);
+  const raw=JSON.stringify(model);const chunks=[];for(let i=0;i&lt;raw.length;i+=30000)chunks.push([raw.slice(i,i+30000)]);
+  if(s.getMaxRows()&lt;chunks.length+1)s.insertRowsAfter(s.getMaxRows(),chunks.length+1-s.getMaxRows());
+  s.getRange(2,1,chunks.length,1).setValues(chunks);s.hideSheet();
+}
+function applyTravelSpec_(ss,spec) {
+  // Only these managed sheets are changed. All other tabs remain untouched.
+  const old=travelMeta_(ss), oldDays=old?old.daySheets.map(x=&gt;travelDaySheet_(ss,x)):[];
+  const oldManaged=new Set([&#x27;整趟總覽&#x27;,&#x27;成員名單&#x27;,&#x27;使用說明&#x27;,TravelSheets.CALC,TravelSheets.META,...oldDays.map(s=&gt;s.getName())]);
+  for(const s of ss.getSheets())if(spec.sheets.some(x=&gt;x.name===s.getName())&amp;&amp;!oldManaged.has(s.getName())&amp;&amp;s.getLastRow()&gt;0)throw Error(&#x27;同名分頁已有其他資料，請使用新的空白試算表。&#x27;);
+  const nativeSheets=new Map();
+  for(const def of spec.sheets) {
+    let s=ss.getSheetByName(def.name);if(!s)s=ss.insertSheet(def.name);nativeSheets.set(def.name,s);
+    const maxRow=Math.max(...def.cells.map(c=&gt;c.r),12),maxCol=Math.max(...def.cells.map(c=&gt;c.c),3);
+    if(s.getMaxRows()&lt;maxRow)s.insertRowsAfter(s.getMaxRows(),maxRow-s.getMaxRows());
+    if(s.getMaxColumns()&lt;maxCol)s.insertColumnsAfter(s.getMaxColumns(),maxCol-s.getMaxColumns());
+    s.getProtections(SpreadsheetApp.ProtectionType.SHEET).filter(p=&gt;p.getDescription()===&#x27;旅伴帳本公式保護&#x27;).forEach(p=&gt;p.remove());
+    s.showRows(1,s.getMaxRows());s.showColumns(1,s.getMaxColumns());
+    const originalRange=s.getRange(1,1,s.getMaxRows(),s.getMaxColumns());originalRange.breakApart();originalRange.clearDataValidations();s.clear();
+    const values=Array.from({length:maxRow},()=&gt;Array(maxCol).fill(&#x27;&#x27;));
+    def.cells.forEach(cell=&gt;{values[cell.r-1][cell.c-1]=cell.kind===&#x27;text&#x27;&amp;&amp;String(cell.v).startsWith(&#x27;=&#x27;)?&quot;&#x27;&quot;+cell.v:cell.v;});
+    s.getRange(1,1,maxRow,maxCol).setValues(values).setFontFamily(&#x27;Noto Sans TC&#x27;).setFontSize(11).setVerticalAlignment(&#x27;middle&#x27;);
+    s.getRange(1,1,maxRow,maxCol).setNumberFormat(&#x27;0.0&#x27;);
+    s.getRange(1,1,Math.min(11,maxRow),maxCol).setWrap(true);
+    for(const merge of def.merges)s.getRange(merge).merge();
+    const columnNumber=letters=&gt;[...letters].reduce((n,ch)=&gt;n*26+ch.charCodeAt(0)-64,0);
+    const widths=Object.entries(def.widths).map(([c,w])=&gt;[columnNumber(c),w]).sort((a,b)=&gt;a[0]-b[0]);
+    for(let i=0;i&lt;widths.length;){let j=i+1;while(j&lt;widths.length&amp;&amp;widths[j][0]===widths[j-1][0]+1&amp;&amp;widths[j][1]===widths[i][1])j++;s.setColumnWidths(widths[i][0],j-i,widths[i][1]);i=j;}
+    s.setFrozenRows(def.freezeRows);s.setFrozenColumns(def.freezeColumns);
+    const header=def.name===&#x27;整趟總覽&#x27;?7:def.name===&#x27;成員名單&#x27;?4:def.name.startsWith(&#x27;第 &#x27;)?11:1;
+    s.getRange(header,1,1,maxCol).setBackground(&#x27;#176253&#x27;).setFontColor(&#x27;#ffffff&#x27;).setFontWeight(&#x27;bold&#x27;);
+    if(def.editable.length)s.getRangeList(def.editable).setBackground(&#x27;#fff8d9&#x27;);
+    def.checkboxes.forEach(a1=&gt;s.getRange(a1).setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(false).build()));
+    def.validations.forEach(v=&gt;{
+      const b=SpreadsheetApp.newDataValidation().setAllowInvalid(false);
+      if(v.type===&#x27;list&#x27;)b.requireValueInList(v.values,true);
+      else if(v.type===&#x27;range&#x27;)b.requireValueInRange(ss.getSheetByName(&#x27;成員名單&#x27;).getRange(`A5:A${spec.n+4}`),true);
+      else b.requireFormulaSatisfied(&#x27;=&#x27;+v.formula);
+      s.getRange(v.range).setDataValidation(b.build());
+    });
+    def.hiddenColumns.forEach(c=&gt;s.hideColumns(columnNumber(c)));
+    def.hiddenRows.forEach(([a,b])=&gt;s.hideRows(a,b-a+1));
+    // Warn on formula / ID edits; actual viewer access is controlled by Google sharing.
+    if(!def.hidden&amp;&amp;s.getProtections(SpreadsheetApp.ProtectionType.SHEET).length===0){const p=s.protect().setDescription(&#x27;旅伴帳本公式保護&#x27;).setWarningOnly(true);p.setUnprotectedRanges(def.editable.map(a=&gt;s.getRange(a)));}
+    if(s.getMaxRows()&gt;maxRow+5)s.deleteRows(maxRow+6,s.getMaxRows()-maxRow-5);
+    if(s.getMaxColumns()&gt;maxCol)s.deleteColumns(maxCol+1,s.getMaxColumns()-maxCol);
+  }
+  spec.metadata.daySheets.forEach(e=&gt;{e.sheetId=nativeSheets.get(e.name).getSheetId();});
+  const metadata=nativeSheets.get(TravelSheets.META),text=JSON.stringify(spec.metadata),chunks=[];for(let i=0;i&lt;text.length;i+=30000)chunks.push([text.slice(i,i+30000)]);
+  metadata.clear();if(metadata.getMaxRows()&lt;chunks.length+1)metadata.insertRowsAfter(metadata.getMaxRows(),chunks.length+1-metadata.getMaxRows());metadata.getRange(&#x27;A1&#x27;).setValue(&#x27;TRAVEL_SHEETS_V1&#x27;);metadata.getRange(2,1,chunks.length,1).setValues(chunks);
+  ss.setActiveSheet(nativeSheets.get(&#x27;整趟總覽&#x27;));
+  oldDays.forEach(s=&gt;{if(!nativeSheets.has(s.getName()))ss.deleteSheet(s);});
+  spec.sheets.forEach(def=&gt;{if(def.hidden)nativeSheets.get(def.name).hideSheet();});
+  SpreadsheetApp.flush();
+}
+function setupTravelSheet() {
+  const ss=SpreadsheetApp.getActive(),old=travelMeta_(ss);
+  if(old) { // Restore native checkbox validations without replacing any current values.
+    const model=readTravelModel_(ss),spec=TravelSheets.build(model);
+    spec.model.days.forEach((d,i)=&gt;{
+      const sheet=travelDaySheet_(ss,old.daySheets.find(x=&gt;x.dayId===d.id));
+      spec.sheets.find(s=&gt;s.name===&#x27;第 &#x27;+(i+1)+&#x27; 天&#x27;).checkboxes.forEach(a=&gt;sheet.getRange(a).setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(false).build()));
+    });
+    old.daySheets.forEach(e=&gt;{e.sheetId=travelDaySheet_(ss,e).getSheetId();});
+    const raw=JSON.stringify(old),parts=[];for(let i=0;i&lt;raw.length;i+=30000)parts.push([raw.slice(i,i+30000)]);
+    const ms=ss.getSheetByName(TravelSheets.META);if(ms.getMaxRows()&lt;parts.length+1)ms.insertRowsAfter(ms.getMaxRows(),parts.length+1-ms.getMaxRows());ms.getRange(2,1,ms.getMaxRows()-1,1).clearContent();ms.getRange(2,1,parts.length,1).setValues(parts);
+  } else {
+    if(ss.getSheets().some(s=&gt;s.getLastRow()&gt;0))throw Error(&#x27;請在新的空白試算表執行，或使用附帶的 XLSX 範本；既有資料未變更。&#x27;);
+    ss.setSpreadsheetLocale(&#x27;zh_TW&#x27;);ss.setSpreadsheetTimeZone(&#x27;Asia/Taipei&#x27;);
+    applyTravelSpec_(ss,TravelSheets.build(TravelSheets.create()));
+  }
+  onOpen();ss.toast(&#x27;原生核取方塊已啟用；公式自動計算，修改會由 Google 自動儲存。&#x27;,&#x27;旅伴帳本&#x27;,8);
+}
+function travelPrompt_(title,message) {const ui=SpreadsheetApp.getUi(),r=ui.prompt(title,message,ui.ButtonSet.OK_CANCEL);return r.getSelectedButton()===ui.Button.OK?r.getResponseText():null;}
+function travelConfirm_(message) {const ui=SpreadsheetApp.getUi();return ui.alert(&#x27;旅伴帳本&#x27;,message,ui.ButtonSet.YES_NO)===ui.Button.YES;}
+function travelChange_(change) {
+  const lock=LockService.getDocumentLock();if(!lock.tryLock(15000))throw Error(&#x27;帳本正在更新，請稍後重試。&#x27;);
+  try {const ss=SpreadsheetApp.getActive(),original=readTravelModel_(ss),next=JSON.parse(JSON.stringify(original));if(change(next,ss)===false)return;const spec=TravelSheets.build(next);writeTravelBackup_(ss,original);applyTravelSpec_(ss,spec);}
+  finally {lock.releaseLock();}
+}
+function activeTravelDay_(model,ss) {const meta=travelMeta_(ss),entry=meta.daySheets.find(e=&gt;travelDaySheet_(ss,e).getSheetId()===ss.getActiveSheet().getSheetId());if(!entry)throw Error(&#x27;請先選取每日明細分頁。&#x27;);return model.days.find(d=&gt;d.id===entry.dayId);}
+function addTravelMember() {const name=travelPrompt_(&#x27;新增成員&#x27;,&#x27;輸入姓名（可留空）&#x27;);if(name===null)return;travelChange_(m=&gt;{if(m.members.length&gt;=TravelSheets.LIMITS.members)throw Error(&#x27;最多 100 名額&#x27;);m.members.push({id:&#x27;p_&#x27;+Date.now().toString(36),name});});}
+function deleteTravelMember() {
+  const ss=SpreadsheetApp.getActive(),original=readTravelModel_(ss);
+  const pid=travelPrompt_(&#x27;刪除成員&#x27;,&#x27;成員名單的 A 欄為固定 ID。輸入要刪除的固定 ID，例如 P001：&#x27;);if(pid===null)return;
+  const member=original.members.find(x=&gt;x.id===pid.trim());if(!member)throw Error(&#x27;找不到該 ID&#x27;);
+  if(!travelConfirm_(&#x27;確定刪除「&#x27;+(member.name||member.id)+&#x27;」及所有日期的參與、司機與代墊關聯？將重新分攤。&#x27;))return;
+  travelChange_(m=&gt;{if(m.members.length===1)throw Error(&#x27;至少保留一個名額&#x27;);m.members=m.members.filter(x=&gt;x.id!==member.id);m.days.forEach(d=&gt;{d.drivers=d.drivers.filter(x=&gt;x!==member.id);d.expenses.forEach(e=&gt;{e.participantIds=e.participantIds.filter(x=&gt;x!==member.id);if(e.payerId===member.id)e.payerId=null;});});});
+}
+function addTravelDay() {const name=travelPrompt_(&#x27;新增一天&#x27;,&#x27;輸入日期名稱（留空使用預設名稱）&#x27;);if(name===null)return;travelChange_(m=&gt;{if(m.days.length&gt;=TravelSheets.LIMITS.days)throw Error(&#x27;最多 31 天&#x27;);const d=TravelSheets.day(m.days.length+1);if(name)d.name=name;m.days.push(d);});}
+function deleteTravelDay() {const ss=SpreadsheetApp.getActive(),m=readTravelModel_(ss),d=activeTravelDay_(m,ss);if(!travelConfirm_(&#x27;確定刪除「&#x27;+d.name+&#x27;」及當日全部資料？&#x27;))return;travelChange_((m,ss)=&gt;{if(m.days.length===1)throw Error(&#x27;至少保留一天&#x27;);const d=activeTravelDay_(m,ss);m.days=m.days.filter(x=&gt;x.id!==d.id);});}
+function addTravelExpense() {const name=travelPrompt_(&#x27;新增費用&#x27;,&#x27;輸入名稱，可在欄位中調整類別&#x27;);if(name===null)return;travelChange_((m,ss)=&gt;{const d=activeTravelDay_(m,ss);if(d.expenses.length&gt;=TravelSheets.LIMITS.expenses)throw Error(&#x27;每天最多 30 筆&#x27;);const e=TravelSheets.expense();if(name)e.name=name;d.expenses.push(e);});}
+function deleteTravelExpense() {const ss=SpreadsheetApp.getActive(),m=readTravelModel_(ss),d=activeTravelDay_(m,ss),index=Math.floor((ss.getActiveRange().getColumn()-4)/2);if(index&lt;0||!d.expenses[index])throw Error(&#x27;請先選取要刪除的費用欄&#x27;);if(!travelConfirm_(&#x27;確定刪除「&#x27;+d.expenses[index].name+&#x27;」及金額、代墊與參與紀錄？&#x27;))return;travelChange_((m,ss)=&gt;{activeTravelDay_(m,ss).expenses.splice(index,1);});}
+function bulkTravelExpense_(checked) {const ss=SpreadsheetApp.getActive(),m=readTravelModel_(ss),d=activeTravelDay_(m,ss),index=Math.floor((ss.getActiveRange().getColumn()-4)/2);if(index&lt;0||!d.expenses[index])throw Error(&#x27;請先選取費用欄&#x27;);const s=ss.getActiveSheet(),c=4+index*2,values=s.getRange(12,c,m.members.length,1).getValues();m.members.forEach((p,i)=&gt;{if(p.name.trim())values[i][0]=checked;});s.getRange(12,c,m.members.length,1).setValues(values);}
+function selectTravelExpense() {bulkTravelExpense_(true);}
+function unselectTravelExpense() {bulkTravelExpense_(false);}
+function exportTravelBackup() {const raw=JSON.stringify(readTravelModel_(SpreadsheetApp.getActive()),null,2);const escaped=raw.replace(/&amp;/g,&#x27;&amp;amp;&#x27;).replace(/&lt;/g,&#x27;&amp;lt;&#x27;).replace(/&gt;/g,&#x27;&amp;gt;&#x27;);SpreadsheetApp.getUi().showModalDialog(HtmlService.createHtmlOutput(&#x27;&lt;p&gt;複製全部內容另存為 .json，或按下載。此檔可匯回原網頁。&lt;/p&gt;&lt;a download=&quot;travel-backup.json&quot; href=&quot;data:application/json;charset=utf-8,&#x27;+encodeURIComponent(raw)+&#x27;&quot;&gt;下載 JSON&lt;/a&gt;&lt;textarea style=&quot;width:100%;height:350px&quot;&gt;&#x27;+escaped+&#x27;&lt;/textarea&gt;&#x27;).setWidth(650).setHeight(450),&#x27;匯出備份&#x27;);}
+function importTravelBackup() {const raw=travelPrompt_(&#x27;匯入 JSON&#x27;,&#x27;貼上 JSON 備份。格式會先檢查，失敗不改原資料。&#x27;);if(raw===null)return;if(raw.length&gt;10*1024*1024)throw Error(&#x27;備份超過 10 MB&#x27;);const next=TravelSheets.validate(JSON.parse(raw));if(!travelConfirm_(&#x27;檢查通過，確定取代目前整趟資料？&#x27;))return;travelChange_(m=&gt;{Object.assign(m,next);});}
+function restoreTravelBackup() {const ss=SpreadsheetApp.getActive(),s=ss.getSheetByName(&#x27;_上次資料備份&#x27;);if(!s||s.getRange(&#x27;A1&#x27;).getValue()!==&#x27;TRAVEL_BACKUP_V1&#x27;)throw Error(&#x27;還沒有有效的結構變更備份&#x27;);const next=TravelSheets.validate(JSON.parse(s.getRange(2,1,s.getLastRow()-1,1).getValues().map(r=&gt;r[0]).join(&#x27;&#x27;)));if(!travelConfirm_(&#x27;確定還原上次結構變更前的整趟資料？&#x27;))return;travelChange_(m=&gt;Object.assign(m,next));}
+function resetTravelSheet() {if(!travelConfirm_(&#x27;確定重設全部為 30 個空白名額、10 天？目前資料會先保留為上次備份。&#x27;))return;travelChange_(m=&gt;Object.assign(m,TravelSheets.create()));}
+function onEdit(e) {
+  if(!e||!e.range)return;const s=e.range.getSheet();
+  if(e.range.getA1Notation()!==&#x27;C3&#x27;||s.getRange(&#x27;A1&#x27;).getValue()===&#x27;&#x27;||e.value!==&#x27;FALSE&#x27;)return;
+  try {
+    const m=readTravelModel_(e.source),d=m.days.find(d=&gt;d.id===s.getRange(&#x27;A1&#x27;).getValue());if(!d)return;
+    if(d.expenses.some(x=&gt;[&#x27;fuel&#x27;,&#x27;rental&#x27;].includes(x.category)&amp;&amp;x.amount.trim()!==&#x27;&#x27;&amp;&amp;Number(x.amount)!==0)) {
+      if(!travelConfirm_(&#x27;當天已有車資。取消用車將保留金額與紀錄，暫不分攤並列為待處理。確定取消用車？&#x27;))e.range.setValue(true);
+    }
+  } catch(err) {e.source.toast(String(err.message),&#x27;請檢查費用設定&#x27;,8);}
+}
+</textarea></details></main><script>
+document.getElementById('copy').addEventListener('click',async()=>{
+ const code=document.getElementById('code'),status=document.getElementById('status');
+ try{await navigator.clipboard.writeText(code.value);status.textContent='已複製，請貼到 Apps Script 編輯器。';}
+ catch{code.closest('details').open=true;code.focus();code.select();
+  try{if(!document.execCommand('copy'))throw Error();status.textContent='已複製，請貼到 Apps Script 編輯器。';}
+  catch{status.textContent='請在程式文字框按 Ctrl+A（Mac：⌘A），再複製。';}}
+});
+</script></body></html>

@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#176253">
+<title>旅伴帳本｜旅遊費用分攤</title>
+<style>
+:root{color-scheme:light;--ink:#233d37;--muted:#64766e;--green:#176253;--pale:#e9f3ed;--paper:#fff;--bg:#f5f5ef;--line:#dce3da;--amber:#925517;--red:#a82f33;--name:156px;--driver:88px;font-family:system-ui,-apple-system,"Noto Sans CJK TC","Microsoft JhengHei",sans-serif}
+
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font-size:15px;line-height:1.6}
+button,input,select{font:inherit}
+button{cursor:pointer;border:1px solid var(--line);border-radius:8px;background:white;color:var(--ink);padding:8px 13px;font-weight:600}
+button:hover{background:var(--pale);border-color:#88ad9c}
+button:disabled{cursor:not-allowed;opacity:.45}
+button.primary{background:var(--green);color:white;border-color:var(--green)}
+button.danger{color:var(--red)}
+button.small{padding:4px 8px;font-size:12px}
+button.text{background:none;border:0;padding:4px;color:var(--green)}
+input:not([type=checkbox]),select{border:1px solid #b9c9bd;border-radius:6px;padding:7px 9px;background:white;color:var(--ink);max-width:100%;min-width:0}
+input:focus,select:focus,button:focus-visible,summary:focus-visible{outline:3px solid #83bdac;outline-offset:2px}
+input[type=checkbox]{appearance:auto;width:19px;height:19px;margin:0;accent-color:var(--green);cursor:pointer;flex:none}
+input[type=checkbox]:disabled{cursor:not-allowed}
+input[aria-invalid=true]{border:2px solid var(--red)}
+label{cursor:pointer}
+h1,h2,h3,p{margin:0}
+h1{font-size:30px;letter-spacing:1px;line-height:1.3}
+h2{font-size:21px}
+h3{font-size:16px}
+.muted{color:var(--muted)}
+.tiny{font-size:12px}
+.mono,.money{font-variant-numeric:tabular-nums}
+.money{white-space:nowrap}
+.wrap{max-width:1540px;margin:auto;padding:28px 32px 48px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:24px}
+.brand{display:flex;align-items:center;gap:14px}
+.brandmark{background:var(--green);color:white;border-radius:15px;width:55px;height:55px;display:grid;place-items:center;font-size:28px}
+.eyebrow{font-size:12px;letter-spacing:2px;color:var(--green);font-weight:700;margin-bottom:3px}
+.tools{display:flex;flex-wrap:wrap;gap:8px}
+.save{font-size:12px;color:var(--muted);text-align:right;margin-top:8px}
+.panel{background:var(--paper);border:1px solid var(--line);border-radius:13px;margin-bottom:20px;overflow:hidden}
+.roster summary{padding:15px 20px;font-weight:700;cursor:pointer}
+.roster-content{border-top:1px solid var(--line);padding:18px 20px}
+.roster-head{display:flex;gap:12px;justify-content:space-between;align-items:center;margin-bottom:15px}
+.roster-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:9px}
+.person-editor{display:flex;gap:7px;align-items:center}
+.person-number{width:24px;text-align:right;color:var(--muted);font-size:12px}
+.person-editor input{width:100%}
+.person-editor .remove{padding:5px 9px}
+.tabs-line{display:flex;align-items:center;gap:10px;margin-bottom:20px}
+.tabs{display:flex;gap:6px;overflow-x:auto;flex:1;padding:4px 2px 8px}
+.tab{white-space:nowrap;background:transparent;border-color:transparent;color:var(--muted)}
+.tab[aria-selected=true]{background:var(--green);color:white}
+.add-day{white-space:nowrap}
+.section-head{display:flex;align-items:center;justify-content:space-between;gap:15px;margin:0 0 17px}
+.section-head p{margin-top:3px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
+.stat{padding:20px;border:1px solid var(--line);border-radius:12px;background:white}
+.stat.featured{background:var(--green);color:white;border-color:var(--green)}
+.stat .label{font-size:13px;margin-bottom:8px}
+.stat .value{font-size:29px;font-weight:750;line-height:1.2}
+.stat .unit{font-size:14px;font-weight:400;margin-left:5px}
+.stat .note{font-size:12px;opacity:.8;margin-top:8px}
+.warn{background:#fff5e7;border:1px solid #e9c99d;border-radius:9px;color:#734314;padding:12px 15px;margin-bottom:18px}
+.warn ul{margin:7px 0 0;padding-left:22px}
+.warn button{margin-left:5px}
+.success{background:var(--pale);color:var(--green);padding:12px 16px;border-radius:9px;margin-bottom:18px}
+.flash{padding:12px 16px;background:#fff5e7;color:#734314;border:1px solid #e9c99d;border-radius:8px;margin-bottom:18px}
+.flash:empty{display:none}
+.table-caption{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:12px;align-items:center}
+.table-scroll{overflow:auto;max-height:68vh;position:relative;isolation:isolate}
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:14px}
+th,td{border-bottom:1px solid var(--line);border-right:1px solid var(--line);padding:12px 14px;text-align:right;background:white}
+th:last-child,td:last-child{border-right:0}
+tbody tr:last-child>*{border-bottom:0}
+thead th{background:#f0f4ef;position:sticky;top:0;z-index:3;font-weight:600;color:var(--ink)}
+tbody tr:hover>td,tbody tr:hover>th{background:#f6faf5}
+.name-cell{position:sticky;left:0;z-index:2;width:var(--name);min-width:var(--name);max-width:var(--name);text-align:left;box-shadow:1px 0 0 var(--line);overflow-wrap:anywhere}
+.corner{z-index:6;background:#eaf0e8}
+tfoot td,tfoot th{background:#eef4ed;font-weight:700}
+tfoot .name-cell{background:#eef4ed}
+.person-label{display:block;font-weight:600}
+.person-index{font-size:11px;color:var(--muted);font-weight:400}
+.driver-cell{position:sticky;left:var(--name);z-index:2;min-width:var(--driver);width:var(--driver);text-align:center;box-shadow:1px 0 0 var(--line)}
+thead .driver-cell{z-index:5;background:#eaf0e8}
+.driver-tag{font-size:11px;border-radius:4px;background:#e8efe6;padding:2px 4px;color:var(--green);display:inline-block}
+.empty{padding:36px 20px;text-align:center;color:var(--muted)}
+.empty p{margin-bottom:12px}
+.daily-tools{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+.daily-title{font-size:21px!important;font-weight:700;width:220px;background:transparent!important}
+.switch{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--pale);border-radius:8px}
+.daily-note{font-size:13px;color:var(--muted);margin-bottom:15px}
+.expense-head{min-width:238px;width:238px;text-align:left;vertical-align:top;padding:13px}
+.expense-head .field{display:block;margin-bottom:8px}
+.expense-head .field>span{display:block;font-size:11px;color:var(--muted);margin-bottom:2px}
+.expense-head input,.expense-head select{width:100%;font-size:13px;font-weight:400}
+.expense-head .pair{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.expense-name{font-weight:700!important}
+.expense-top{display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:6px}
+.expense-top span{color:var(--muted);font-size:11px}
+.expense-totals{font-size:12px;margin:7px 0}
+.expense-totals strong{color:var(--green)}
+.expense-status{font-size:11px;color:var(--red);margin-top:6px;font-weight:400;max-width:214px}
+.expense-status:empty{display:none}
+.select-tools{display:flex;gap:6px}
+.participation{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.participation .amount-label{display:block;white-space:nowrap}
+.cell-note{font-size:11px;color:var(--muted)}
+.cell-zero{color:#809086}
+.off-car{background:#faf6ef}
+.overview-table{min-width:1050px}
+.overview-table .due{color:var(--red);font-weight:700}
+.overview-table .receive{color:var(--green);font-weight:700}
+.footer-note{font-size:12px;color:var(--muted);margin-top:18px;line-height:1.8}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+.badge{display:inline-block;font-size:11px;padding:2px 7px;background:var(--pale);color:var(--green);border-radius:20px;margin-left:8px}
+.overview-table th{white-space:nowrap}
+.expense-total-label{font-size:12px}
+.day-footer{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:12px}
+
+@media(max-width:850px){.wrap{padding:20px 16px 35px}
+.top{align-items:flex-start;flex-direction:column}
+.top-right{width:100%}
+.save{text-align:left}
+.stats{grid-template-columns:repeat(2,1fr)}
+h1{font-size:26px}
+.stat{padding:16px}
+.stat .value{font-size:25px}
+.section-head{align-items:flex-start}
+.table-caption{padding:12px}
+.table-scroll{max-height:70vh}
+ :root{--name:112px;--driver:66px}
+.name-cell{padding:9px}
+.driver-cell{padding:9px 4px}
+.tools button{padding:7px 10px}
+.roster-grid{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
+}
+
+@media print{.tools,.roster,.tabs-line,.daily-tools button,.select-tools,.expense-top button,.flash{display:none}
+.wrap{max-width:none;padding:0}
+.table-scroll{overflow:visible;max-height:none}
+.name-cell,.driver-cell,thead th{position:static}
+.panel{overflow:visible}
+.top{margin-bottom:15px}
+.stat{padding:12px}
+body{background:white}
+}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><div class="brandmark" aria-hidden="true">旅</div><div><div class="eyebrow">一起旅行・一起算清楚</div><h1>旅伴帳本</h1><p class="muted">旅遊費用分攤</p></div></div>
+    <div class="top-right"><div class="tools">
+      <button type="button" data-action="example">載入範例</button>
+      <button type="button" data-action="export">匯出 JSON</button>
+      <button type="button" data-action="export-view">匯出唯讀網頁</button>
+      <button type="button" data-action="import">匯入備份</button>
+      <button type="button" class="danger" data-action="reset">重設全部</button>
+    </div><p id="save-status" class="save" role="status">資料保存在此瀏覽器</p></div>
+  </header>
+  <div id="flash" class="flash" role="alert"></div>
+  <main>
+    <details id="roster" class="panel roster"><summary id="roster-summary">統一名單</summary><div id="roster-content" class="roster-content"></div></details>
+    <nav class="tabs-line" aria-label="旅程分頁"><div id="tabs" class="tabs" role="tablist" aria-label="總覽與每日明細"></div><button type="button" class="add-day" data-action="add-day">＋ 新增一天</button></nav>
+    <div id="view" role="tabpanel" tabindex="0"></div>
+  </main>
+  <footer class="footer-note">所有金額以元計，精確至 0.1 元。尾差依統一名單順序分配。資料僅保存在目前瀏覽器，建議定期匯出 JSON 備份；此頁不會上傳資料。</footer>
+</div>
+<input type="file" id="import-file" accept="application/json,.json" hidden>
+
+<script id="trip-core">
+'use strict';
+const TripCore = (() => {
+  const VERSION = 1;
+  const LIMITS = Object.freeze({members:200, days:100, expenses:100, units:1000000000});
+  const CATEGORIES = Object.freeze({breakfast:'早餐', lunch:'午餐', dinner:'晚餐', fuel:'油錢', rental:'租車費', parking:'停車費', other:'其他'});
+  const isNamed = m => m.name.trim().length > 0;
+  const isCar = e => e.category === 'fuel' || e.category === 'rental';
+  const id = prefix => prefix + '_' + (globalThis.crypto?.randomUUID?.() || Date.now().toString(36) + Math.random().toString(36).slice(2));
+  function expense(category='other') {
+    return {id:id('e'), name:CATEGORIES[category], category, amount:'', payerId:null, participantIds:[]};
+  }
+  function day(number=1) {
+    return {id:id('d'), name:`第 ${number} 天`, useCar:false, drivers:[], expenses:Object.keys(CATEGORIES).map(expense)};
+  }
+  function createTrip(people=30, days=10) {
+    if (!Number.isInteger(people) || people < 1 || people > LIMITS.members || !Number.isInteger(days) || days < 1 || days > LIMITS.days) throw new Error('人數或天數超過範圍');
+    return {version:VERSION, members:Array.from({length:people},()=>({id:id('p'), name:''})), days:Array.from({length:days},(_,i)=>day(i+1))};
+  }
+  function parseAmount(raw) {
+    if (typeof raw !== 'string') return {ok:false, units:0};
+    const s = raw.trim();
+    if (s === '') return {ok:true, units:0};
+    if (!/^(?:\d+(?:\.\d?)?|\.\d)$/.test(s)) return {ok:false, units:0};
+    const [whole='', fraction=''] = s.split('.');
+    const units = Number(whole || '0') * 10 + Number(fraction || '0');
+    return {ok:Number.isSafeInteger(units) && units >= 0 && units <= LIMITS.units, units:Number.isSafeInteger(units) && units <= LIMITS.units ? units : 0};
+  }
+  function split(units, memberIds) {
+    if (!Number.isSafeInteger(units) || units < 0 || units > LIMITS.units || new Set(memberIds).size !== memberIds.length) throw new Error('分攤輸入不合法');
+    const result = Object.create(null);
+    if (!memberIds.length) return result;
+    const base = Math.floor(units / memberIds.length), remainder = units % memberIds.length;
+    memberIds.forEach((memberId,i)=>{result[memberId] = base + (i < remainder ? 1 : 0);});
+    return result;
+  }
+  function calculateExpense(state, d, e) {
+    const parsed = parseAmount(e.amount), issues = [];
+    const driverIds = new Set(d.useCar ? d.drivers.filter(pid=>state.members.some(m=>m.id===pid && isNamed(m))) : []);
+    const participants = new Set(e.participantIds);
+    let eligible = state.members.filter(m=>isNamed(m) && participants.has(m.id) && !(isCar(e) && driverIds.has(m.id))).map(m=>m.id);
+    let blocked = !parsed.ok;
+    const issue = (code,message,blocks=false) => {issues.push({code,message}); if (blocks) blocked = true;};
+    if (!parsed.ok) issue('invalid-amount','金額須為非負數、最多一位小數，且不超過 100,000,000 元。',true);
+    if (isCar(e) && !d.useCar) {
+      eligible = [];
+      if (parsed.units > 0) issue('no-car','當日未用車，但保留了車資。請啟用用車，或清除／調整這筆費用；目前暫不分攤。',true);
+    }
+    if (parsed.units > 0) {
+      if (isCar(e) && d.useCar && !driverIds.size) issue('missing-driver','有車資但尚未設定具名司機，請勾選當日司機；目前暫不分攤。',true);
+      if (!eligible.length && !(isCar(e) && !d.useCar)) issue('no-participants','正金額沒有可分攤者，請確認姓名、參與勾選及司機免分攤。',true);
+      const payer = state.members.find(m=>m.id===e.payerId && isNamed(m));
+      if (!payer) issue('missing-payer','尚未指定具名代墊者，請補齊以完成收付款核對。');
+    }
+    const shares = Object.fromEntries(state.members.map(m=>[m.id,0]));
+    if (!blocked) Object.assign(shares, split(parsed.units, eligible));
+    const allocated = Object.values(shares).reduce((a,b)=>a+b,0);
+    return {units:parsed.units, amountValid:parsed.ok, eligible, shares, allocated, blocked, issues};
+  }
+  function summarize(state) {
+    const people = state.members.filter(isNamed).map(m=>({id:m.id,name:m.name,meals:0,fuel:0,rental:0,other:0,total:0,advanced:0,pay:0,receive:0}));
+    const peopleById = new Map(people.map(p=>[p.id,p]));
+    let total=0, allocated=0, unassignedAdvance=0;
+    const issues=[], expenses=[];
+    for (const d of state.days) for (const e of d.expenses) {
+      const result=calculateExpense(state,d,e);
+      total+=result.units; allocated+=result.allocated;
+      const payer=peopleById.get(e.payerId);
+      if (payer) payer.advanced+=result.units; else unassignedAdvance+=result.units;
+      const bucket=['breakfast','lunch','dinner'].includes(e.category)?'meals':e.category==='fuel'?'fuel':e.category==='rental'?'rental':'other';
+      for (const p of people) {p[bucket]+=result.shares[p.id]; p.total+=result.shares[p.id];}
+      for (const issue of result.issues) issues.push({...issue,dayId:d.id,expenseId:e.id,dayName:d.name,expenseName:e.name});
+      expenses.push({dayId:d.id,expenseId:e.id,...result});
+    }
+    for (const p of people) {p.pay=Math.max(0,p.total-p.advanced); p.receive=Math.max(0,p.advanced-p.total);}
+    return {people,total,allocated,difference:total-allocated,unassignedAdvance,issues,expenses};
+  }
+  function validateState(input) {
+    const fail=message=>{throw new Error(message);};
+    const object=x=>x!==null && typeof x==='object' && !Array.isArray(x);
+    const text=(s,max,label)=>{if(typeof s!=='string'||s.length>max)fail(`${label}格式錯誤`); return s;};
+    const ids = new Set();
+    const readId=x=>{if(typeof x!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(x)||ids.has(x))fail('ID 格式錯誤或重複'); ids.add(x);return x;};
+    if(!object(input)||input.version!==VERSION)fail('不支援的備份版本');
+    if(!Array.isArray(input.members)||input.members.length<1||input.members.length>LIMITS.members)fail('名單須有 1–200 個名額');
+    const members=input.members.map(m=>{if(!object(m))fail('成員格式錯誤');return {id:readId(m.id),name:text(m.name,80,'姓名')};});
+    const memberIds=new Set(members.map(m=>m.id));
+    function references(list) {
+      if(!Array.isArray(list)||list.length>members.length||new Set(list).size!==list.length||list.some(x=>!memberIds.has(x)))fail('參與者或司機參照錯誤');
+      return [...list];
+    }
+    if(!Array.isArray(input.days)||input.days.length<1||input.days.length>LIMITS.days)fail('日期須有 1–100 天');
+    const days=input.days.map(d=>{
+      if(!object(d)||typeof d.useCar!=='boolean')fail('每日設定格式錯誤');
+      const dayId=readId(d.id), name=text(d.name,80,'日期名稱'), drivers=references(d.drivers);
+      if(!Array.isArray(d.expenses)||d.expenses.length>LIMITS.expenses)fail('每天最多 100 筆費用');
+      const expenses=d.expenses.map(e=>{
+        if(!object(e)||!Object.hasOwn(CATEGORIES,e.category))fail('費用類別錯誤');
+        if(e.payerId!==null&&!memberIds.has(e.payerId))fail('代墊者參照錯誤');
+        return {id:readId(e.id),name:text(e.name,80,'費用名稱'),category:e.category,amount:text(e.amount,32,'金額'),payerId:e.payerId,participantIds:references(e.participantIds)};
+      });
+      return {id:dayId,name,useCar:d.useCar,drivers,expenses};
+    });
+    return {version:VERSION,members,days};
+  }
+  function encode(state) {return JSON.stringify(validateState(state),null,2);}
+  function decode(raw) {
+    if(typeof raw!=='string'||raw.length>10*1024*1024)throw new Error('備份超過 10 MB 或不是文字');
+    let parsed;try{parsed=JSON.parse(raw);}catch{throw new Error('檔案不是有效的 JSON');}
+    return validateState(parsed);
+  }
+  function example() {
+    const s=createTrip(4,2);
+    ['阿安','小晴','阿哲','小羽'].forEach((name,i)=>{s.members[i].name=name;});
+    const p=s.members.map(m=>m.id);
+    s.days.forEach((d,i)=>{d.useCar=true;d.drivers=[p[i]];});
+    const set=(di,cat,amount,participants,payer)=>{const e=s.days[di].expenses.find(e=>e.category===cat);Object.assign(e,{amount,participantIds:participants,payerId:payer});};
+    set(0,'breakfast','120',p,p[0]);set(0,'lunch','360',p.slice(0,3),p[1]);set(0,'dinner','800',p,p[2]);
+    set(0,'fuel','300',p,p[0]);set(0,'rental','900',p,p[0]);set(0,'parking','100',p,p[1]);
+    set(1,'breakfast','100',p.slice(1),p[1]);set(1,'fuel','240',p,p[1]);set(1,'other','200',p,p[3]);
+    return s;
+  }
+  return Object.freeze({VERSION,LIMITS,CATEGORIES,isNamed,isCar,id,expense,day,createTrip,parseAmount,split,calculateExpense,summarize,validateState,encode,decode,example});
+})();
+globalThis.TripCore=TripCore;
+</script>
+
+<script id="trip-app">
+(() => {
+  'use strict';
+  const C=TripCore, STORAGE='travel-split-v1', TAB=STORAGE+'-tab';
+  const $=id=>document.getElementById(id);
+  const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const money=units=>(units/10).toLocaleString('zh-TW',{minimumFractionDigits:1,maximumFractionDigits:1});
+  const snapshotElement=$('trip-snapshot'), readOnly=Boolean(snapshotElement);
+  let state=C.createTrip(), active='overview', storageOk=true, initialMessage='', snapshotTime='';
+  if(readOnly) {
+    try {
+      const snapshot=JSON.parse(snapshotElement.textContent);
+      state=C.validateState(snapshot.trip);
+      const date=new Date(snapshot.createdAt);
+      snapshotTime=Number.isNaN(date.getTime())?'未標示時間':date.toLocaleString('zh-TW',{timeZone:'Asia/Taipei',hour12:false});
+    } catch {initialMessage='唯讀快照資料損壞，無法顯示原帳目。請向管理者取得新的檔案。';}
+    document.title='旅伴帳本｜唯讀旅遊費用';
+    document.querySelector('.eyebrow').textContent='旅程帳目・唯讀快照';
+    document.querySelector('.footer-note').textContent='此頁為唯讀快照，不會讀取或寫入你的瀏覽器帳本。若管理者更新費用，須重新發布快照後再重新載入。';
+  } else try {
+    const stored=localStorage.getItem(STORAGE);
+    if(stored) {
+      try {state=C.decode(stored);}
+      catch(err) {
+        localStorage.setItem(STORAGE+'-recovery-'+Date.now(),stored);
+        initialMessage='原有資料格式有誤，已另存於瀏覽器的 recovery 備份；目前顯示空白旅程，原資料未移除。'+err.message;
+      }
+    }
+    const selected=localStorage.getItem(TAB);
+    if(selected==='overview'||state.days.some(d=>d.id===selected))active=selected;
+  } catch {storageOk=false;initialMessage='瀏覽器儲存空間不可用。仍可操作，但請匯出 JSON 備份，重新整理可能無法保留資料。';}
+  function notify(message) {$('flash').textContent=message;}
+  function save() {
+    if(readOnly)return;
+    try {localStorage.setItem(STORAGE,C.encode(state));localStorage.setItem(TAB,active);storageOk=true;$('save-status').textContent='已自動儲存於此瀏覽器';}
+    catch {storageOk=false;$('save-status').textContent='儲存失敗，請立即匯出 JSON 備份';notify('儲存空間不足或被瀏覽器阻擋。你的修改尚在本頁，請匯出 JSON 備份。');}
+  }
+  const currentDay=()=>state.days.find(d=>d.id===active);
+  const memberName=m=>m.name.trim()||`未命名成員 ${state.members.indexOf(m)+1}`;
+  function renderRoster() {
+    const count=state.members.filter(C.isNamed).length;
+    $('roster-summary').textContent=`統一名單　${count} 位已填姓名 / ${state.members.length} 個名額`;
+    $('roster-content').innerHTML=`<div class="roster-head"><p class="muted tiny">姓名在此統一修改，所有日期同步。空白姓名不分攤，既有勾選仍保留。</p><button type="button" data-action="add-member" ${state.members.length>=C.LIMITS.members?'disabled':''}>＋ 新增成員</button></div><div class="roster-grid">${state.members.map((m,i)=>`<div class="person-editor"><span class="person-number">${i+1}</span><label class="sr-only" for="name-${m.id}">成員 ${i+1} 姓名</label><input id="name-${m.id}" data-field="member-name" data-person="${m.id}" maxlength="80" placeholder="輸入姓名" value="${esc(m.name)}" autocomplete="off"><button type="button" class="remove danger" data-action="delete-member" data-person="${m.id}" aria-label="刪除成員 ${i+1}" ${state.members.length===1?'disabled':''}>×</button></div>`).join('')}</div>`;
+  }
+  function renderTabs() {
+    $('tabs').innerHTML=[{id:'overview',name:'整趟總覽'},...state.days].map(d=>`<button type="button" class="tab" id="tab-${d.id}" role="tab" aria-selected="${active===d.id}" aria-controls="view" tabindex="${active===d.id?'0':'-1'}" data-action="tab" data-tab="${d.id}">${esc(d.name||'未命名日期')}</button>`).join('');
+    $('view').setAttribute('aria-labelledby','tab-'+active);
+    document.querySelector('[data-action="add-day"]').disabled=state.days.length>=C.LIMITS.days;
+  }
+  function renderOverview() {
+    const s=C.summarize(state), sum=key=>s.people.reduce((n,p)=>n+p[key],0);
+    const columns=[['meals','餐費合計'],['fuel','油錢合計'],['rental','租車費合計'],['other','其他費用合計'],['total','總分攤'],['advanced','已代墊'],['pay','還要付'],['receive','應收回']];
+    const rows=s.people.map(p=>`<tr><th scope="row" class="name-cell"><span class="person-label">${esc(p.name)}</span><span class="person-index">名單第 ${state.members.findIndex(m=>m.id===p.id)+1} 位</span></th>${columns.map(([key])=>`<td class="money ${key==='pay'&&p.pay?'due':key==='receive'&&p.receive?'receive':''}" data-summary="${p.id}-${key}">${money(p[key])}</td>`).join('')}</tr>`).join('');
+    $('view').innerHTML=`<div class="section-head"><div><h2>整趟總覽</h2><p class="muted">${state.days.length} 天旅程 · ${s.people.length} 位旅伴 <span class="badge">${readOnly?'唯讀快照':'即時彙總'}</span></p></div></div>
+      <div class="stats"><div class="stat featured"><div class="label">全部支出</div><div class="value money" id="total-expense">${money(s.total)}<span class="unit">元</span></div><div class="note">包含尚待處理的有效金額</div></div>
+      <div class="stat"><div class="label">已分攤總額</div><div class="value money" id="total-allocated">${money(s.allocated)}<span class="unit">元</span></div><div class="note">所有人的分攤合計</div></div>
+      <div class="stat"><div class="label">差額 · 尚未分攤</div><div class="value money" id="total-difference">${money(s.difference)}<span class="unit">元</span></div><div class="note">全部支出 − 已分攤</div></div>
+      <div class="stat"><div class="label">待處理項目</div><div class="value" id="issue-count">${s.issues.length}<span class="unit">項</span></div><div class="note">未指定代墊 ${money(s.unassignedAdvance)} 元</div></div></div>
+      ${s.issues.length?`<div class="warn" id="pending-issues"><strong>${readOnly?'此快照有待管理者處理的項目':'請先處理以下項目，再確認收付款'}</strong><p class="tiny">待處理車資仍列入全部支出與已代墊，但暫不分攤；不合法金額尚未計入支出。</p><ul>${s.issues.map(i=>`<li>${esc(i.dayName||'未命名日期')} · ${esc(i.expenseName||'未命名費用')}：${esc(i.message)} <button type="button" class="text tiny" data-action="goto-expense" data-tab="${i.dayId}" data-expense="${i.expenseId}">${readOnly?'查看明細':'前往處理'} →</button></li>`).join('')}</ul></div>`:`<div class="success">${s.total?'帳目已核對：所有支出均已分攤，代墊者已填齊。':readOnly?'此快照目前沒有支出。':'目前沒有支出。先編輯統一名單，再到每日明細填寫費用與勾選參與者。'}</div>`}
+      <section class="panel"><div class="table-caption"><h3>每人應付與應收</h3><span class="muted tiny">其他費用含停車費 · 單位：元</span></div><div class="table-scroll"><table class="overview-table" aria-label="整趟每人費用總覽"><thead><tr><th scope="col" class="name-cell corner">旅伴</th>${columns.map(([,label])=>`<th scope="col">${label}</th>`).join('')}</tr></thead><tbody>${rows||`<tr><td colspan="9" class="empty"><p>還沒有具名成員，空白名額不列入分攤。</p><button type="button" data-action="open-roster">編輯統一名單</button></td></tr>`}</tbody>${rows?`<tfoot><tr><th scope="row" class="name-cell">合計</th>${columns.map(([key])=>`<td class="money">${money(sum(key))}</td>`).join('')}</tr></tfoot>`:''}</table></div></section>
+      <p class="muted tiny">還要付＝總分攤 − 已代墊；若為負數，改列應收回。同名成員仍以各自固定 ID 獨立計算。</p>`;
+  }
+  function shareRange(r) {
+    const values=r.eligible.map(pid=>r.shares[pid]);
+    if(!values.length||r.blocked)return '暫不分攤';
+    const lo=Math.min(...values),hi=Math.max(...values);
+    return lo===hi?`${money(lo)} 元／人`:`${money(lo)}–${money(hi)} 元／人`;
+  }
+  function payerOptions(e) {
+    let html=`<option value="">未指定代墊者</option>`;
+    if(e.payerId && !state.members.find(m=>m.id===e.payerId && C.isNamed(m)))html+=`<option value="${e.payerId}" selected>原代墊者尚未填姓名</option>`;
+    html+=state.members.filter(C.isNamed).map(m=>`<option value="${m.id}" ${e.payerId===m.id?'selected':''}>${esc(m.name)}（${state.members.indexOf(m)+1}）</option>`).join('');
+    return html;
+  }
+  function renderDaily() {
+    const d=currentDay();if(!d){active='overview';renderOverview();return;}
+    const results=new Map(d.expenses.map(e=>[e.id,C.calculateExpense(state,d,e)]));
+    const heads=d.expenses.map((e,i)=>{
+      const r=results.get(e.id);
+      return `<th scope="col" class="expense-head ${C.isCar(e)&&!d.useCar?'off-car':''}" id="expense-${e.id}">
+        <div class="expense-top"><span>費用 ${i+1}</span><button type="button" class="small danger" data-action="delete-expense" data-expense="${e.id}" aria-label="刪除費用 ${i+1}">刪除</button></div>
+        <label class="field"><span>名稱</span><input class="expense-name" id="expense-name-${e.id}" data-field="expense-name" data-expense="${e.id}" aria-label="費用 ${i+1} 名稱" value="${esc(e.name)}" maxlength="80"></label>
+        <div class="pair"><label class="field"><span>類別</span><select id="category-${e.id}" data-field="category" data-expense="${e.id}" aria-label="費用 ${i+1} 類別">${Object.entries(C.CATEGORIES).map(([v,l])=>`<option value="${v}" ${e.category===v?'selected':''}>${l}</option>`).join('')}</select></label>
+        <label class="field"><span>總金額（元）</span><input id="amount-${e.id}" data-field="amount" data-expense="${e.id}" aria-label="費用 ${i+1} 總金額" inputmode="decimal" maxlength="32" placeholder="0.0" value="${esc(e.amount)}" aria-invalid="${!r.amountValid}"></label></div>
+        <label class="field"><span>代墊者</span><select id="payer-${e.id}" data-field="payer" data-expense="${e.id}" aria-label="費用 ${i+1} 代墊者">${payerOptions(e)}</select></label>
+        <div class="expense-totals">分攤 <strong data-count="${e.id}">${r.blocked?0:r.eligible.length}</strong> 人 · <span data-range="${e.id}">${shareRange(r)}</span></div>
+        <div class="select-tools"><button type="button" class="small" data-action="select-all" data-expense="${e.id}">全選</button><button type="button" class="small" data-action="select-none" data-expense="${e.id}">取消全選</button></div>
+        <div class="expense-status" role="status">${r.issues.map(i=>esc(i.message)).join('<br>')}</div></th>`;
+    }).join('');
+    const rows=state.members.map((m,i)=>`<tr><th scope="row" class="name-cell"><span class="person-label ${C.isNamed(m)?'':'muted'}">${esc(memberName(m))}</span><span class="person-index">${i+1} ${!C.isNamed(m)?'· 不列入分攤':''}</span></th>
+      <td class="driver-cell"><label><input type="checkbox" id="driver-${d.id}-${m.id}" data-field="driver" data-person="${m.id}" aria-label="${esc(memberName(m))} 當日司機" ${d.drivers.includes(m.id)?'checked':''} ${!d.useCar||!C.isNamed(m)?'disabled':''}><span class="sr-only">當日司機</span></label></td>
+      ${d.expenses.map(e=>{const r=results.get(e.id), exempt=C.isCar(e)&&d.useCar&&d.drivers.includes(m.id)&&C.isNamed(m);return `<td><div class="participation"><label><input type="checkbox" id="part-${e.id}-${m.id}" data-field="participation" data-person="${m.id}" data-expense="${e.id}" aria-label="${esc(memberName(m))} 參與 ${esc(e.name||'未命名費用')} 費用 ${d.expenses.indexOf(e)+1}" ${e.participantIds.includes(m.id)?'checked':''} ${C.isNamed(m)?'':'disabled'}></label><div><span class="amount-label money ${r.shares[m.id]?'':'cell-zero'}" data-share="${e.id}-${m.id}">${money(r.shares[m.id])}</span><span class="cell-note">${exempt?'司機免車資':C.isCar(e)&&!d.useCar?'當日未用車':!C.isNamed(m)?'待填姓名':r.blocked?'待處理':''}</span></div></div></td>`;}).join('')}</tr>`).join('');
+    const issues=d.expenses.reduce((n,e)=>n+results.get(e.id).issues.length,0), total=d.expenses.reduce((n,e)=>n+results.get(e.id).units,0), allocated=d.expenses.reduce((n,e)=>n+results.get(e.id).allocated,0);
+    $('view').innerHTML=`<div class="daily-tools"><label><span class="sr-only">當日名稱</span><input id="day-name-${d.id}" class="daily-title" data-field="day-name" value="${esc(d.name)}" maxlength="80" aria-label="當日名稱"></label><label class="switch"><input id="use-car-${d.id}" type="checkbox" data-field="use-car" ${d.useCar?'checked':''}> 當日用車</label><button type="button" class="danger" data-action="delete-day" ${state.days.length===1?'disabled':''}>刪除此天</button></div>
+      <div class="section-head"><p class="muted">${readOnly?'檢視當日參與者、司機與分攤結果。':'每天獨立勾選參與者與司機。'}</p><button type="button" class="primary" data-action="add-expense" ${d.expenses.length>=C.LIMITS.expenses?'disabled':''}>＋ 新增費用</button></div>
+      <p class="daily-note">司機只免當日油錢與租車費，仍分攤已勾選的餐費、停車費與其他費用。全選／取消全選只操作具名成員。</p>
+      ${issues?`<div class="warn" id="daily-warning">當日有 <strong>${issues}</strong> 項待處理，請查看各費用欄的提示。已輸入的費用會保留；待處理的車資暫不分攤。</div>`:''}
+      <section class="panel"><div class="table-caption"><h3>每日明細</h3><span class="muted tiny">可左右與上下捲動 · 名稱與費用標題固定</span></div><div class="table-scroll" id="daily-scroll"><table aria-label="每日費用參與與分攤"><thead><tr><th scope="col" class="name-cell corner">旅伴</th><th scope="col" class="driver-cell">當日<br>司機</th>${heads}</tr></thead><tbody>${rows}</tbody><tfoot><tr><th scope="row" class="name-cell">已分攤合計</th><td class="driver-cell"></td>${d.expenses.map(e=>`<td class="money" data-expense-total="${e.id}">${money(results.get(e.id).allocated)}</td>`).join('')}</tr></tfoot></table></div></section>
+      ${!d.expenses.length?'<div class="empty">當天尚無費用，按「新增費用」加入。</div>':''}
+      <div class="day-footer"><p class="muted tiny">當日支出 <strong class="money">${money(total)}</strong> 元 · 已分攤 <strong class="money">${money(allocated)}</strong> 元 · 差額 <strong class="money">${money(total-allocated)}</strong> 元</p><button type="button" data-action="tab" data-tab="overview">查看整趟總覽 →</button></div>`;
+  }
+  function render() {
+    const focused=document.activeElement, focusId=focused?.id;
+    let selection=null;try {if(typeof focused?.selectionStart==='number')selection=[focused.selectionStart,focused.selectionEnd];}catch{}
+    const positions=[...document.querySelectorAll('.table-scroll,#tabs')].map(el=>[el.id,el.scrollLeft,el.scrollTop]);
+    const scrollY=window.scrollY;
+    renderRoster();renderTabs();active==='overview'?renderOverview():renderDaily();
+    if(readOnly) {
+      $('roster').hidden=true;
+      document.querySelector('.tools').hidden=true;
+      document.querySelector('[data-action="add-day"]').hidden=true;
+      $('save-status').textContent=`唯讀快照 · 更新於 ${snapshotTime}（台北時間）`;
+      document.querySelectorAll('#view input,#view select').forEach(el=>{el.disabled=true;});
+      document.querySelectorAll('#view button[data-action]').forEach(el=>{if(!['tab','goto-expense'].includes(el.dataset.action))el.hidden=true;});
+    }
+    for(const [pid,x,y] of positions){const el=pid&&$(pid);if(el){el.scrollLeft=x;el.scrollTop=y;}}
+    if(focusId&&$(focusId)){const el=$(focusId);el.focus({preventScroll:true});if(selection)try{el.setSelectionRange(...selection);}catch{}}
+    window.scrollTo(0,scrollY);
+  }
+  function commit() {save();render();}
+  function selectTab(tab) {
+    active=tab;if(!readOnly)try{localStorage.setItem(TAB,tab);}catch{}render();
+    $('tab-'+tab)?.scrollIntoView({block:'nearest',inline:'nearest'});
+  }
+  function toggleIn(list,value,on) {return on?[...new Set([...list,value])]:list.filter(x=>x!==value);}
+  function handleField(el) {
+    if(readOnly)return;
+    const field=el.dataset.field;if(!field)return;
+    const d=currentDay(), e=d?.expenses.find(e=>e.id===el.dataset.expense), m=state.members.find(m=>m.id===el.dataset.person);
+    if(field==='member-name'&&m)m.name=el.value;
+    else if(field==='day-name'&&d)d.name=el.value;
+    else if(field==='expense-name'&&e)e.name=el.value;
+    else if(field==='amount'&&e)e.amount=el.value;
+    else if(field==='category'&&e)e.category=el.value;
+    else if(field==='payer'&&e)e.payerId=el.value||null;
+    else if(field==='participation'&&e&&m&&C.isNamed(m))e.participantIds=toggleIn(e.participantIds,m.id,el.checked);
+    else if(field==='driver'&&d&&m&&d.useCar&&C.isNamed(m))d.drivers=toggleIn(d.drivers,m.id,el.checked);
+    else if(field==='use-car'&&d) {
+      const hasCarMoney=d.expenses.some(e=>C.isCar(e)&&(e.amount.trim()!==''&&(!C.parseAmount(e.amount).ok||C.parseAmount(e.amount).units>0)));
+      if(!el.checked&&hasCarMoney&&!confirm('此日已有油錢或租車費。取消用車後，金額、代墊者、司機與參與紀錄仍會保留，但車資暫不分攤並列為待處理。要取消用車嗎？')){render();return;}
+      d.useCar=el.checked;
+    } else return;
+    commit();
+  }
+  document.addEventListener('input',event=>{
+    const el=event.target;
+    if(el.matches('input[data-field]:not([type=checkbox])')&&!event.isComposing)handleField(el);
+  });
+  document.addEventListener('compositionend',event=>{if(event.target.matches('input[data-field]:not([type=checkbox])'))handleField(event.target);});
+  document.addEventListener('change',event=>{
+    if(event.target.matches('select[data-field],input[type=checkbox][data-field]'))handleField(event.target);
+  });
+  document.addEventListener('click',event=>{
+    const button=event.target.closest('button[data-action]');if(!button||button.disabled)return;
+    const action=button.dataset.action, d=currentDay(), eid=button.dataset.expense;
+    if(readOnly&&!['tab','goto-expense'].includes(action))return;
+    if(action==='tab'){selectTab(button.dataset.tab);return;}
+    if(action==='open-roster'){$('roster').open=true;$('roster').scrollIntoView({block:'start'});$('name-'+state.members[0].id)?.focus();return;}
+    if(action==='goto-expense'){selectTab(button.dataset.tab);$('amount-'+eid)?.focus();return;}
+    if(action==='import'){$('import-file').click();return;}
+    if(action==='export'){
+      const blob=new Blob([C.encode(state)],{type:'application/json;charset=utf-8'}), url=URL.createObjectURL(blob), a=document.createElement('a');
+      a.href=url;a.download='旅伴帳本-'+new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Taipei'}).format(new Date())+'.json';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);notify('已匯出 JSON 備份，包含所有成員、日期、司機、費用與參與紀錄。');return;
+    }
+    if(action==='export-view') {
+      const copy=document.documentElement.cloneNode(true);
+      const embedded=document.createElement('script');embedded.id='trip-snapshot';embedded.type='application/json';
+      embedded.textContent=JSON.stringify({createdAt:new Date().toISOString(),trip:state}).replace(/</g,'\\u003c');
+      copy.querySelector('#trip-app').before(embedded);
+      copy.querySelector('#view').replaceChildren();copy.querySelector('#roster-content').replaceChildren();copy.querySelector('#tabs').replaceChildren();copy.querySelector('#flash').textContent='';copy.querySelector('#roster').removeAttribute('open');
+      const blob=new Blob(['<!doctype html>\n'+copy.outerHTML],{type:'text/html;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');
+      a.href=url;a.download='trip-view.html';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+      notify('已匯出唯讀網頁。可發布至 GitHub Pages 或傳送檔案；此為快照，修改後須重新匯出更新，不會即時同步。');return;
+    }
+    if(action==='example'||action==='reset'){
+      if(!confirm(action==='example'?'載入範例將取代目前整趟資料。建議先匯出備份，確定繼續？':'確定重設全部資料？將恢復 30 個空白名額與 10 天，無法復原；建議先匯出備份。'))return;
+      state=action==='example'?C.example():C.createTrip();active='overview';notify(action==='example'?'已載入範例。這是示範資料，可用「重設全部」清除。':'已重設為空白旅程。');commit();return;
+    }
+    if(action==='add-member'){
+      if(state.members.length>=C.LIMITS.members)return;
+      const m={id:C.id('p'),name:''};state.members.push(m);commit();$('name-'+m.id).focus();return;
+    }
+    if(action==='delete-member'){
+      if(state.members.length===1)return;
+      const pid=button.dataset.person, m=state.members.find(m=>m.id===pid);
+      const hasData=m.name.trim()||state.days.some(d=>d.drivers.includes(pid)||d.expenses.some(e=>e.payerId===pid||e.participantIds.includes(pid)));
+      if(hasData&&!confirm(`確定刪除「${memberName(m)}」？將移除所有日期的司機、參與與代墊關聯，剩餘成員會重新分攤；建議先備份。`))return;
+      state.members=state.members.filter(m=>m.id!==pid);
+      state.days.forEach(d=>{d.drivers=d.drivers.filter(x=>x!==pid);d.expenses.forEach(e=>{e.participantIds=e.participantIds.filter(x=>x!==pid);if(e.payerId===pid)e.payerId=null;});});commit();return;
+    }
+    if(action==='add-day'){
+      if(state.days.length>=C.LIMITS.days)return;
+      const next=C.day(state.days.length+1);state.days.push(next);active=next.id;commit();return;
+    }
+    if(!d)return;
+    if(action==='delete-day'){
+      if(state.days.length===1||!confirm(`確定刪除「${d.name||'未命名日期'}」及當日所有費用、參與與司機紀錄？建議先匯出備份。`))return;
+      const index=state.days.indexOf(d);state.days.splice(index,1);active=state.days[Math.max(0,index-1)].id;commit();return;
+    }
+    if(action==='add-expense'){
+      if(d.expenses.length>=C.LIMITS.expenses)return;
+      const e=C.expense();d.expenses.push(e);commit();$('expense-name-'+e.id).focus();return;
+    }
+    const e=d.expenses.find(e=>e.id===eid);if(!e)return;
+    if(action==='delete-expense'){
+      if((e.amount.trim()||e.payerId||e.participantIds.length)&&!confirm(`確定刪除「${e.name||'未命名費用'}」及其金額、代墊與參與紀錄？`))return;
+      d.expenses=d.expenses.filter(e=>e.id!==eid);commit();return;
+    }
+    if(action==='select-all'||action==='select-none'){
+      const named=state.members.filter(C.isNamed).map(m=>m.id), ids=new Set(e.participantIds);
+      named.forEach(pid=>action==='select-all'?ids.add(pid):ids.delete(pid));e.participantIds=[...ids];commit();
+    }
+  });
+  $('tabs').addEventListener('keydown',event=>{
+    if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+    const ids=['overview',...state.days.map(d=>d.id)], index=ids.indexOf(active);
+    const next=event.key==='Home'?0:event.key==='End'?ids.length-1:(index+(event.key==='ArrowRight'?1:-1)+ids.length)%ids.length;
+    event.preventDefault();selectTab(ids[next]);$('tab-'+active).focus();
+  });
+  $('import-file').addEventListener('change',async event=>{
+    if(readOnly)return;
+    const file=event.target.files[0];if(!file)return;
+    try {
+      if(file.size>10*1024*1024)throw new Error('檔案不得超過 10 MB');
+      const restored=C.decode(await file.text());
+      if(!confirm('備份格式檢查通過。匯入將取代目前整趟資料，確定還原？'))return;
+      state=restored;active='overview';commit();notify('已成功還原備份。所有日期、固定成員 ID 與參與紀錄均已保留。');
+    } catch(err) {notify('匯入失敗，原資料未變更：'+err.message);}
+    finally {event.target.value='';}
+  });
+  render();if(initialMessage)notify(initialMessage);
+  if(!storageOk)$('save-status').textContent='自動儲存不可用，請使用 JSON 備份';
+})();
+</script>
+</body>
+</html>

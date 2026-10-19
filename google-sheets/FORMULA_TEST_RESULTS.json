@@ -1,0 +1,27 @@
+{
+  "engine": "LibreOfficeDev 26.8.0.0.alpha0 2c87e51eeaa2b413ff4ae097b2705eea1995d8e5",
+  "passed": [
+    "initial_empty_30_people_10_days",
+    "100_divided_by_3",
+    "meals_and_dates_independent",
+    "day_1_A_day_2_B_drivers_and_meals",
+    "multiple_drivers",
+    "no_car_cost_preserved",
+    "missing_driver",
+    "no_participants",
+    "all_drivers_zero_eligible",
+    "zero_and_empty_amounts",
+    "blank_names_excluded",
+    "person_30",
+    "renaming_preserves_ids_advance_and_shares",
+    "duplicate_category_separate_expenses",
+    "invalid_amounts",
+    "excess_precision_not_silently_accepted",
+    "whitespace_amount",
+    "missing_payer",
+    "full_example_all_totals_balanced",
+    "120_small_integer_shares_no_float_accumulation"
+  ],
+  "count": 20,
+  "google_runtime_tested": false
+}
