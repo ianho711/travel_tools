@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#263c55">
-<title>旅伴帳本 v1.8.1｜旅遊費用分攤</title>
+<title>旅伴帳本 v1.9.0｜旅遊費用分攤</title>
 <style>
 :root{color-scheme:light;--ink:#24364d;--muted:#5c6b7b;--accent:#b34d2c;--pale:#f7e9df;--paper:#fffdf9;--bg:#f5f1e9;--line:#e3ded5;--amber:#946017;--red:#b23b46;--navy:#263c55;--teal:#256970;--teal-pale:#e8f2ef;--name:156px;--driver:88px;font-family:system-ui,-apple-system,"Noto Sans CJK TC","Microsoft JhengHei",sans-serif}
 
@@ -223,7 +223,7 @@ body{background:white}
 <body>
 <div class="wrap">
   <header class="top">
-    <div class="brand"><div class="brandmark" aria-hidden="true"><svg width="32" height="32" viewBox="0 0 32 32" fill="none"><path d="M27 5 5 13l9 4 4 10L27 5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="m14 17 8-8M5 22l-2 2m7 1-3 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></div><div><div class="eyebrow">一起出發，把帳算清楚</div><h1>旅伴帳本 <span class="app-version" id="app-version">v1.8.1</span></h1><p class="muted">旅遊費用分攤</p></div></div>
+    <div class="brand"><div class="brandmark" aria-hidden="true"><svg width="32" height="32" viewBox="0 0 32 32" fill="none"><path d="M27 5 5 13l9 4 4 10L27 5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="m14 17 8-8M5 22l-2 2m7 1-3 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></div><div><div class="eyebrow">一起出發，把帳算清楚</div><h1>旅伴帳本 <span class="app-version" id="app-version">v1.9.0</span></h1><p class="muted">旅遊費用分攤</p></div></div>
     <div class="top-right"><div class="tools">
       <button type="button" data-action="example">載入範例</button>
       <button type="button" class="primary" data-action="export-sheet">匯出試算表</button>
@@ -247,8 +247,8 @@ body{background:white}
 <script id="trip-core">
 'use strict';
 const TripCore = (() => {
-  const APP_VERSION = '1.8.1';
-  const VERSION = 8;
+  const APP_VERSION = '1.9.0';
+  const VERSION = 9;
   const LIMITS = Object.freeze({members:200, family:100, days:100, expenses:100, ledger:5000, units:1000000000});
   const CATEGORIES = Object.freeze({breakfast:'早餐', lunch:'午餐', dinner:'晚餐', meal:'餐費', fuel:'油錢', rental:'租車費', parking:'停車費', other:'其他'});
   const LEDGER_TYPES = Object.freeze({adjustment:'其他用途／調整',charge:'個人加購',payment:'已繳款',refund:'已退款'});
@@ -258,7 +258,7 @@ const TripCore = (() => {
   const isTransport=e=>isCar(e)||e.category==='parking';
   const id = prefix => prefix + '_' + (globalThis.crypto?.randomUUID?.() || Date.now().toString(36) + Math.random().toString(36).slice(2));
   function expense(category='other') {
-    return {id:id('e'), name:CATEGORIES[category], category, amount:'', payerId:null, participantIds:[]};
+    return {id:id('e'), name:CATEGORIES[category], category, splitMode:'people', amount:'', payerId:null, participantIds:[]};
   }
   function day(number=1) {
     return {id:id('d'), name:`第 ${number} 天`, useCar:false, drivers:[], expenses:Object.keys(CATEGORIES).filter(key=>key!=='meal').map(expense)};
@@ -299,7 +299,7 @@ const TripCore = (() => {
     return result;
   }
   function calculateExpense(state, d, e) {
-    const parsed = parseAmount(e.amount), issues = [];
+    const parsed = parseAmount(e.amount), issues = [],byGroup=e.splitMode==='groups'&&!isTransport(e);
     const driverIds = new Set(d.useCar ? d.drivers.filter(pid=>state.members.some(m=>m.id===pid && isNamed(m))) : []);
     const participants = new Set(e.participantIds);
     const billableCounts=Object.fromEntries(state.members.map(m=>[m.id,isNamed(m)&&participants.has(m.id)&&!(isTransport(e)&&m.excludeTransport)?Math.max(0,familySize(m)-(isCar(e)&&driverIds.has(m.id)?1:0)):0]));
@@ -318,9 +318,9 @@ const TripCore = (() => {
       if (!payer) issue('missing-payer','尚未指定具名代墊者，請補齊以完成收付款核對。');
     }
     const shares = Object.fromEntries(state.members.map(m=>[m.id,0]));
-    if (!blocked) Object.assign(shares, splitPeople(parsed.units, eligible.map(id=>({id,weight:billableCounts[id]}))));
+    if (!blocked) Object.assign(shares, splitPeople(parsed.units, eligible.map(id=>({id,weight:byGroup?1:billableCounts[id]}))));
     const allocated = Object.values(shares).reduce((a,b)=>a+b,0);
-    return {units:parsed.units, amountValid:parsed.ok, eligible, shares, allocated, blocked, issues,billableCounts,participantCount:eligible.reduce((n,id)=>n+billableCounts[id],0),grouped:eligible.some(id=>familySize(state.members.find(m=>m.id===id))>1)};
+    return {units:parsed.units, amountValid:parsed.ok, eligible, shares, allocated, blocked, issues,billableCounts,splitMode:byGroup?'groups':'people',splitCount:byGroup?eligible.length:eligible.reduce((n,id)=>n+billableCounts[id],0),splitUnit:byGroup?'組':'人',participantCount:eligible.reduce((n,id)=>n+billableCounts[id],0),grouped:byGroup||eligible.some(id=>familySize(state.members.find(m=>m.id===id))>1)};
   }
   function splitWeighted(units,entries) {
     if(!Number.isSafeInteger(units)||units<0||units>LIMITS.units||new Set(entries.map(e=>e.id)).size!==entries.length||entries.some(e=>!Number.isInteger(e.weight)||e.weight<1||e.weight>LIMITS.days*LIMITS.family*2))throw new Error('權重分攤輸入不合法');
@@ -425,7 +425,7 @@ const TripCore = (() => {
     const text=(s,max,label)=>{if(typeof s!=='string'||s.length>max)fail(`${label}格式錯誤`); return s;};
     const ids = new Set();
     const readId=x=>{if(typeof x!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(x)||ids.has(x))fail('ID 格式錯誤或重複'); ids.add(x);return x;};
-    if(!object(input)||![1,2,3,4,5,6,7,VERSION].includes(input.version))fail('不支援的備份版本');
+    if(!object(input)||![1,2,3,4,5,6,7,8,VERSION].includes(input.version))fail('不支援的備份版本');
     if(!Array.isArray(input.members)||input.members.length<1||input.members.length>LIMITS.members)fail('名單須有 1–200 個名額');
     const members=input.members.map(m=>{if(!object(m))fail('成員格式錯誤');if(m.count!==undefined&&(!Number.isInteger(m.count)||m.count<1||m.count>LIMITS.family))fail('代表人數須為1–100的整數');if(m.excludeTransport!==undefined&&typeof m.excludeTransport!=='boolean')fail('交通自理設定格式錯誤');return {id:readId(m.id),name:text(m.name,80,'姓名'),count:m.count??1,excludeTransport:m.excludeTransport??false};});
     const memberIds=new Set(members.map(m=>m.id));
@@ -447,7 +447,8 @@ const TripCore = (() => {
       const expenses=d.expenses.map(e=>{
         if(!object(e)||!Object.hasOwn(CATEGORIES,e.category))fail('費用類別錯誤');
         if(e.payerId!==null&&!memberIds.has(e.payerId))fail('代墊者參照錯誤');
-        return {id:readId(e.id),name:text(e.name,80,'費用名稱'),category:e.category,amount:text(e.amount,32,'金額'),payerId:e.payerId,participantIds:references(e.participantIds)};
+        if(e.splitMode!==undefined&&!['people','groups'].includes(e.splitMode)||isTransport(e)&&e.splitMode==='groups')fail('費用分攤方式錯誤，交通費維持原分攤規則');
+        return {id:readId(e.id),name:text(e.name,80,'費用名稱'),category:e.category,splitMode:e.splitMode??'people',amount:text(e.amount,32,'金額'),payerId:e.payerId,participantIds:references(e.participantIds)};
       });
       return {id:dayId,name,useCar:d.useCar,drivers,expenses};
     });
@@ -539,9 +540,9 @@ const TripExport = (() => {
       ...summary.people.map(p=>[cell(p.name),...columns.map(([key])=>yuan(p[key]))]),
       [cell('合計',2),...columns.map(([key])=>cell(summary.people.reduce((sum,p)=>sum+p[key],0)/10,6))]
     ]};
-    const meals={name:'每餐參與名單',freezeRows:3,freezeColumns:2,widths:[23,24,18,58,20,64],merges:['A1:F1','A2:F2'],rows:[
+    const meals={name:'每餐參與名單',freezeRows:3,freezeColumns:2,widths:[23,24,18,58,20,64,24,24],merges:['A1:H1','A2:H2'],rows:[
       [cell('每餐獨立勾選與分攤',3)],textRow('未勾選者不分攤；當日司機有參與用餐時，餐費照常分攤。'),
-      header(['日期','餐費項目','餐費總額（元）','勾選參與者','實際分攤人數','待處理提醒'])
+      header(['日期','餐費項目','餐費總額（元）','勾選參與者','實際分攤人數','待處理提醒','分攤方式','分攤份數（人／組）'])
     ]};
     const pending={name:'待處理項目',freezeRows:2,freezeColumns:1,widths:[24,24,78],merges:['A1:C1'],rows:[
       [cell('待處理項目｜請在原 HTML 帳本修正後重新匯出',3)],header(['日期','費用','提醒'])
@@ -567,7 +568,7 @@ const TripExport = (() => {
         [cell('當日支出'),yuan(sum('units')),cell('已分攤'),yuan(sum('allocated')),cell('差額'),yuan(sum('units')-sum('allocated'))],
         textRow('每項費用獨立勾選；未參與者 0 元。交通費用不列入本表。'),
       ];
-      const metadata=[['費用名稱',e=>e.name],['總金額（元）',(e,r)=>r.amountValid?r.units/10:'待修正：'+e.amount],['代墊者',e=>{const payer=state.members.find(m=>m.id===e.payerId);return payer&&TripCore.isNamed(payer)?payer.name:'未指定具名代墊者';}],['實際分攤人數',(e,r)=>r.blocked?0:r.participantCount],['各筆帳金額（元）',(e,r)=>{if(r.blocked||!r.eligible.length)return '暫不分攤';const shares=r.eligible.map(pid=>r.shares[pid]);const lo=Math.min(...shares)/10,hi=Math.max(...shares)/10;return lo===hi?lo.toFixed(1):lo.toFixed(1)+'–'+hi.toFixed(1);}],['待處理提醒',(e,r)=>r.issues.map(i=>i.message).join('；')]];
+      const metadata=[['費用名稱',e=>e.name],['總金額（元）',(e,r)=>r.amountValid?r.units/10:'待修正：'+e.amount],['代墊者',e=>{const payer=state.members.find(m=>m.id===e.payerId);return payer&&TripCore.isNamed(payer)?payer.name:'未指定具名代墊者';}],['實際分攤人數',(e,r)=>r.blocked?0:r.participantCount],['各筆帳金額（元）',(e,r)=>{if(r.blocked||!r.eligible.length)return '暫不分攤';const shares=r.eligible.map(pid=>r.shares[pid]);const lo=Math.min(...shares)/10,hi=Math.max(...shares)/10;return (lo===hi?lo.toFixed(1):lo.toFixed(1)+'–'+hi.toFixed(1))+(r.splitMode==='groups'?` 元／組（按組數，共${r.splitCount}組）`:' 元／帳（按人數）');}],['待處理提醒',(e,r)=>r.issues.map(i=>i.message).join('；')]];
       metadata.forEach(([label,getValue],mi)=>{
         const row=[cell(label,5)];
         expenses.forEach((e,ei)=>{const r=results[ei],value=getValue(e,r);row.push(cell(value,mi===1&&r.amountValid?1:mi===5&&r.issues.length?7:mi===0?2:5),cell(''));});rows.push(row);
@@ -581,7 +582,7 @@ const TripExport = (() => {
       });
       const footer=[cell('已分攤合計',2)];results.forEach(r=>footer.push(cell(''),cell(r.allocated/10,6)));
       footer.push(cell(sum('allocated')/10,6),cell(results.reduce((n,r,ei)=>n+(named.some(m=>m.id===expenses[ei].payerId)?r.units:0),0)/10,6));rows.push(footer);
-      expenses.forEach((e,ei)=>{if(['breakfast','lunch','dinner','meal'].includes(e.category)){const r=results[ei];meals.rows.push([cell(day.name),cell(e.name),r.amountValid?yuan(r.units):cell('待修正：'+e.amount,7),cell(namesFor(state,e).join('、')||'尚未勾選'),cell(r.blocked?0:r.participantCount),cell(r.issues.map(i=>i.message).join('；'),r.issues.length?7:0)]);}});
+      expenses.forEach((e,ei)=>{if(['breakfast','lunch','dinner','meal'].includes(e.category)){const r=results[ei];meals.rows.push([cell(day.name),cell(e.name),r.amountValid?yuan(r.units):cell('待修正：'+e.amount,7),cell(namesFor(state,e).join('、')||'尚未勾選'),cell(r.blocked?0:r.participantCount),cell(r.issues.map(i=>i.message).join('；'),r.issues.length?7:0),cell(r.splitMode==='groups'?'按組數（每列姓名1組）':'按人數'),cell(r.blocked?0:r.splitCount)]);}});
       const end=col(Math.max(6,3+expenses.length*2)),merges=[`A1:${end}1`,`A4:${end}4`];
       for(let r=5;r<=10;r++){expenses.forEach((e,i)=>merges.push(`${col(2+2*i)}${r}:${col(3+2*i)}${r}`));}
       const label=day.name.trim()===('第 '+(index+1)+' 天')?day.name:'第 '+(index+1)+' 天｜'+(day.name||'每日明細');
@@ -637,6 +638,7 @@ const TripExport = (() => {
       textRow('資料來源','所有分攤已在原 HTML 帳本計算完成。本報表保存本次結果，不含需要啟用的程式或公式。'),
       textRow('家庭代表','代表人數含本人，餐費與其他費用依實際代表人數均分；整趟車資依計費人數乘搭車日計算。司機只免本人1份，代墊／繳款等實際金額不倍乘。'),
       textRow('租車優惠','租金填實際付給租車公司的金額，代墊保留全額；優惠另列團體收入，用以抵減交通分攤。例：租金實付5250、收入400，代墊仍5250，分攤淨額4850。優惠收入不算任何成員的代墊或已繳款。'),
+      textRow('按組分攤','單筆餐費或其他非交通費用可選按組數；每列具名代表人算1組，不論代表幾人；只在有勾選的組之間均分。其他費用與交通規則各自獨立。'),
       textRow('餐費','每天的早餐、午餐、晚餐，以及同類的多筆餐費，各自勾選參與者。沒吃不勾，不分攤該筆。'),
       textRow('交通自理','統一名單標記交通自理者，即使原來勾選搭車，也不計乘車人天、油錢、租金與停車費；餐費仍各餐勾選。'),
       textRow('整趟車資','總油錢與租車費可按乘車人天分攤。全天1人天、半天0.5人天；按代表人數計算，司機本人當日不計費。逐日分配為核對用，並非每日實際耗油。'),
@@ -748,7 +750,7 @@ globalThis.TripExport=TripExport;
   function renderRoster() {
     const count=state.members.filter(C.isNamed).length;
     $('roster-summary').textContent=`統一名單　${count} 位已填姓名 / ${state.members.length} 個名額${state.members.some(m=>C.isNamed(m)&&C.familySize(m)>1)?' · 實際 '+state.members.filter(C.isNamed).reduce((n,m)=>n+C.familySize(m),0)+' 人':''}`;
-    $('roster-content').innerHTML=`<div class="roster-head"><p class="muted tiny">代表人數包含本人，勾選即整組參與。家人若有不同餐次或搭車行程，請拆成多列。空白姓名不分攤，既有紀錄保留。</p><button type="button" data-action="add-member" ${state.members.length>=C.LIMITS.members?'disabled':''}>＋ 新增成員</button></div><div class="roster-grid">${state.members.map((m,i)=>`<div class="person-editor"><span class="person-number">${i+1}</span><label class="sr-only" for="name-${m.id}">成員 ${i+1} 姓名</label><input id="name-${m.id}" data-field="member-name" data-person="${m.id}" maxlength="80" placeholder="輸入姓名" value="${esc(m.name)}" autocomplete="off"><button type="button" class="remove danger" data-action="delete-member" data-person="${m.id}" aria-label="刪除成員 ${i+1}" ${state.members.length===1?'disabled':''}>×</button><label class="family-count" for="count-${m.id}">代表人數（含本人）<input type="number" id="count-${m.id}" data-field="member-count" data-person="${m.id}" min="1" max="100" step="1" inputmode="numeric" required aria-label="${esc(memberName(m))} 代表人數" value="${C.familySize(m)}"></label><label class="transport-exclusion"><input type="checkbox" data-field="exclude-transport" data-person="${m.id}" aria-label="${esc(memberName(m))} 交通自理" ${m.excludeTransport?'checked':''}>交通自理／不分攤本團車資</label></div>`).join('')}</div>`;
+    $('roster-content').innerHTML=`<div class="roster-head"><p class="muted tiny">代表人數包含本人，勾選即整組參與。家人若有不同餐次或搭車行程，請拆成多列。空白姓名不分攤，既有紀錄保留。單筆費用若選按組，每列姓名均算1組。</p><button type="button" data-action="add-member" ${state.members.length>=C.LIMITS.members?'disabled':''}>＋ 新增成員</button></div><div class="roster-grid">${state.members.map((m,i)=>`<div class="person-editor"><span class="person-number">${i+1}</span><label class="sr-only" for="name-${m.id}">成員 ${i+1} 姓名</label><input id="name-${m.id}" data-field="member-name" data-person="${m.id}" maxlength="80" placeholder="輸入姓名" value="${esc(m.name)}" autocomplete="off"><button type="button" class="remove danger" data-action="delete-member" data-person="${m.id}" aria-label="刪除成員 ${i+1}" ${state.members.length===1?'disabled':''}>×</button><label class="family-count" for="count-${m.id}">代表人數（含本人）<input type="number" id="count-${m.id}" data-field="member-count" data-person="${m.id}" min="1" max="100" step="1" inputmode="numeric" required aria-label="${esc(memberName(m))} 代表人數" value="${C.familySize(m)}"></label><label class="transport-exclusion"><input type="checkbox" data-field="exclude-transport" data-person="${m.id}" aria-label="${esc(memberName(m))} 交通自理" ${m.excludeTransport?'checked':''}>交通自理／不分攤本團車資</label></div>`).join('')}</div>`;
   }
   function renderTabs() {
     $('tabs').innerHTML=[{id:'overview',name:'整趟總覽'},{id:'vehicles',name:'交通費用'},{id:'personal',name:'個人結算'},...state.days].map(d=>`<button type="button" class="tab" id="tab-${d.id}" role="tab" aria-selected="${active===d.id}" aria-controls="view" tabindex="${active===d.id?'0':'-1'}" data-action="tab" data-tab="${d.id}">${esc(d.name||'未命名日期')}</button>`).join('');
@@ -856,12 +858,13 @@ globalThis.TripExport=TripExport;
 
       <label>代墊者<select id="payer-${e.id}" data-field="payer" data-expense="${e.id}" aria-label="費用代墊者">${payerOptions(e)}</select></label>
       ${isTrip&&e.category==='rental'?`<label>租車優惠收入（元）<input id="discount-${e.id}" data-field="rental-discount" data-expense="${e.id}" inputmode="decimal" maxlength="32" aria-label="租車優惠金額" value="${esc(e.discount)}" placeholder="0.0"></label><label>收入說明（選填）<input id="discount-note-${e.id}" data-field="rental-discount-note" maxlength="160" aria-label="租車優惠說明" value="${esc(e.discountNote)}"></label>`:''}
+      ${!isTrip&&!C.isTransport(e)?`<label class="wide">分攤方式<select id="expense-split-mode" data-field="expense-split-mode" aria-label="本筆費用分攤方式"><option value="people" ${(e.splitMode??'people')==='people'?'selected':''}>按人數：依代表人數分攤</option><option value="groups" ${e.splitMode==='groups'?'selected':''}>按組數：每列姓名算1組，均分本筆費用</option></select><span class="tiny muted">例如老師代表7人、另一家庭代表2人，按組時各算1組。只套用這一筆費用。</span></label>`:''}
       ${isTrip?`<label class="wide">分攤方式<select id="trip-method" data-field="trip-method" aria-label="車資分攤方式"><option value="person-days" ${e.method==='person-days'?'selected':''}>依乘車人天：全天1份、半天0.5份</option><option value="day-average" ${e.method==='day-average'?'selected':''}>先平均每天，再按當日乘車時長分攤</option></select></label>`:''}</div>
       ${isTrip?`<h3>涵蓋的用車日期</h3><p class="tiny muted">先在交通費用設定每日用車與司機，再在此選擇日期和乘客。當司機的日期不計費。</p><div class="trip-date-choices">${state.days.map(day=>`<label class="trip-date-choice"><input type="checkbox" data-field="trip-day" data-day="${day.id}" aria-label="車資涵蓋 ${esc(day.name||'未命名日期')}" ${e.rides.some(ride=>ride.dayId===day.id)?'checked':''}>${esc(day.name||'未命名日期')}${day.useCar?'':'（未用車）'}</label>`).join('')}</div>`:''}
       <div id="expense-preview" class="dialog-preview" role="status"></div><div id="expense-dialog-issues" class="warn" hidden></div>
-      <div class="section-head"><h3>${isTrip?'每日搭車紀錄':'參與者'}</h3>${readOnly?'':`<div class="select-tools">${isTrip&&!planOnly&&state.carExpenses.some(other=>other.id!==e.id)?'<button type="button" class="small" data-action="copy-trip-rides">沿用上一筆搭車名單</button>':''}<button type="button" class="small" data-action="select-all" data-expense="${e.id}">全選</button><button type="button" class="small" data-action="select-none" data-expense="${e.id}">取消全選</button></div>`}</div>
-      <p class="tiny muted">${isTrip?'有搭車就勾選，再選全天或半天；全天算1天、半天算0.5天，乘以代表人數即為人天。取消勾選不計費；司機只免本人1份，其餘家人仍計費。每日分配僅供核對，並非實際每日耗油。':'司機只免當日油錢與租車費；用餐仍照常分攤。空白姓名不列入。'}</p>
-      ${isTrip?'<div id="trip-ride-matrix"></div>':`<div class="dialog-participants">${state.members.filter(C.isNamed).map(m=>`<label class="dialog-person"><input type="checkbox" data-field="draft-participation" data-person="${m.id}" aria-label="${esc(m.name)} 參與本筆費用" ${e.participantIds.includes(m.id)?'checked':''} ${C.isTransport(e)&&m.excludeTransport?'disabled':''}><span>${esc(m.name)}${C.familySize(m)>1?`（${C.familySize(m)}人）`:''}${C.isTransport(e)&&m.excludeTransport?'（交通自理）':''}</span><span class="money" data-draft-share="${m.id}"></span></label>`).join('')||'<p class="muted">請先在統一名單填入姓名。</p>'}</div>`}</div>
+      <div class="section-head"><h3 id="expense-participants-title">${isTrip?'每日搭車紀錄':'參與者'}</h3>${readOnly?'':`<div class="select-tools">${isTrip&&!planOnly&&state.carExpenses.some(other=>other.id!==e.id)?'<button type="button" class="small" data-action="copy-trip-rides">沿用上一筆搭車名單</button>':''}<button type="button" class="small" data-action="select-all" data-expense="${e.id}">全選</button><button type="button" class="small" data-action="select-none" data-expense="${e.id}">取消全選</button></div>`}</div>
+      <p class="tiny muted" id="expense-participant-help">${isTrip?'有搭車就勾選，再選全天或半天；全天算1天、半天算0.5天，乘以代表人數即為人天。取消勾選不計費；司機只免本人1份，其餘家人仍計費。每日分配僅供核對，並非實際每日耗油。':'司機只免當日油錢與租車費；用餐仍照常分攤。空白姓名不列入。'}</p>
+      ${isTrip?'<div id="trip-ride-matrix"></div>':`<div class="dialog-participants">${state.members.filter(C.isNamed).map(m=>`<label class="dialog-person"><input type="checkbox" data-field="draft-participation" data-person="${m.id}" aria-label="${esc(m.name)} 參與本筆費用" ${e.participantIds.includes(m.id)?'checked':''} ${C.isTransport(e)&&m.excludeTransport?'disabled':''}><span data-draft-member="${m.id}">${esc(m.name)}${C.familySize(m)>1?`（${C.familySize(m)}人）`:''}${C.isTransport(e)&&m.excludeTransport?'（交通自理）':''}</span><span class="money" data-draft-share="${m.id}"></span></label>`).join('')||'<p class="muted">請先在統一名單填入姓名。</p>'}</div>`}</div>
       <footer class="dialog-footer">${!readOnly&&original?`<button type="button" class="danger" data-action="delete-expense" data-expense="${e.id}">刪除此費用</button>`:''}<button type="button" data-action="close-expense">${readOnly?'關閉':'取消'}</button>${readOnly?'':'<button type="button" class="primary" data-action="save-expense">儲存費用</button>'}</footer>`;
     if(planOnly){dialog.querySelector('.expense-form').hidden=true;$('expense-dialog-title').textContent='整趟搭車名單 · 依乘車人天';dialog.querySelector('[data-action="save-expense"]')?.replaceChildren(document.createTextNode('儲存搭車名單'));}
     if(isTrip)renderTripRideMatrix();
@@ -884,7 +887,7 @@ globalThis.TripExport=TripExport;
     }
     $('amount-'+e.id).setAttribute('aria-invalid',String(isTrip?!r.grossValid:!r.amountValid));
     if(isTrip&&e.category==='rental')$('discount-'+e.id).setAttribute('aria-invalid',String(!r.discountValid));
-    $('expense-preview').textContent=(isTrip&&e.category==='rental'?`租金分攤淨額 ${r.amountValid?money(r.units):'待修正'} 元；代墊 ${money(r.advanceUnits)} 元 · `:'')+(isTrip?`${r.days.length} 天 · ${Object.values(r.billablePersonDays).reduce((n,v)=>n+v,0)} 人天 · `:'')+`分攤 ${r.blocked?0:r.participantCount} 人 · ${shareRange(r)} · 已分攤 ${money(r.allocated)} 元`;
+    $('expense-preview').textContent=(isTrip&&e.category==='rental'?`租金分攤淨額 ${r.amountValid?money(r.units):'待修正'} 元；代墊 ${money(r.advanceUnits)} 元 · `:'')+(isTrip?`${r.days.length} 天 · ${Object.values(r.billablePersonDays).reduce((n,v)=>n+v,0)} 人天 · `:'')+`分攤 ${r.blocked?0:(isTrip?r.participantCount:r.splitCount)} ${isTrip?'人':r.splitUnit}${!isTrip&&r.splitMode==='groups'?'（每列姓名1組）':''} · ${shareRange(r)} · 已分攤 ${money(r.allocated)} 元`;
     const warnings=$('expense-dialog-issues');warnings.hidden=!r.issues.length;warnings.textContent=r.issues.map(i=>i.message).join(' ');
     if(isTrip){
       $('expense-dialog').querySelectorAll('[data-trip-share]').forEach(el=>{const dayId=el.dataset.day,pid=el.dataset.person;const day=r.days.find(day=>day.dayId===dayId);el.textContent=money(day?.shares[pid]||0);});
@@ -895,6 +898,8 @@ globalThis.TripExport=TripExport;
       $('expense-dialog').querySelectorAll('[data-field="trip-duration"]').forEach(el=>{const ride=e.rides.find(ride=>ride.dayId===el.dataset.day);el.value=ride?.halfDayIds?.includes(el.dataset.person)?'1':'2';el.disabled=readOnly||!ride?.participantIds.includes(el.dataset.person)||state.members.some(m=>m.id===el.dataset.person&&m.excludeTransport);});
       return;
     }
+    if(!C.isTransport(e)){$('expense-participants-title').textContent=r.splitMode==='groups'?'分攤代表（每位代表1份）':'參與者';$('expense-participant-help').textContent=r.splitMode==='groups'?'請逐一勾選要出這筆費用的代表；每列姓名算1組，代表幾人都付相同份額。只影響本筆費用，未勾選者不付。':'每筆費用各自勾選參與者，依代表人數分攤。空白姓名不列入。';}
+    $('expense-dialog').querySelectorAll('[data-draft-member]').forEach(el=>{const m=state.members.find(m=>m.id===el.dataset.draftMember);el.textContent=m.name+(r.splitMode==='groups'?`（${C.familySize(m)}人 · 1組）`:C.familySize(m)>1?`（${C.familySize(m)}人）`:'')+(C.isTransport(e)&&m.excludeTransport?'（交通自理）':'');});
     $('expense-dialog').querySelectorAll('[data-draft-share]').forEach(el=>el.textContent=money(r.shares[el.dataset.draftShare])+' 元');
     $('expense-dialog').querySelectorAll('[data-field="draft-participation"]').forEach(el=>{el.checked=e.participantIds.includes(el.dataset.person);el.disabled=readOnly||C.isTransport(e)&&state.members.some(m=>m.id===el.dataset.person&&m.excludeTransport);});
   }
@@ -914,6 +919,7 @@ globalThis.TripExport=TripExport;
       const halfDayIds=toggleIn(ride.halfDayIds||[],el.dataset.person,el.value==='1');
       if(halfDayIds.length)ride.halfDayIds=halfDayIds;else delete ride.halfDayIds;
     }
+    else if(field==='expense-split-mode'&&expenseEditor.dayId!=='vehicles'&&!C.isTransport(e)&&['people','groups'].includes(el.value))e.splitMode=el.value;
     else if(field==='expense-name')e.name=el.value;
     else if(field==='amount')e.amount=el.value;
     else if(field==='payer')e.payerId=el.value||null;
@@ -972,7 +978,7 @@ globalThis.TripExport=TripExport;
     const d=currentDay();if(!d){active='overview';renderOverview();return;}
     const visible=d.expenses.filter(e=>!C.isTransport(e));
     const results=new Map(visible.map(e=>[e.id,C.calculateExpense(state,d,e)]));
-    const titles=visible.map(e=>{const r=results.get(e.id);return `<th scope="col" class="expense-title" data-category="${e.category}" id="title-${e.id}"><button type="button" class="expense-open" id="edit-${e.id}" data-action="open-expense" data-expense="${e.id}" aria-label="${readOnly?'查看':'編輯'}費用 ${esc(e.name||'未命名費用')}"><span class="compact-expense-name" title="${esc(e.name||'未命名費用')}">${esc(e.name||'未命名費用')} <span aria-hidden="true">${readOnly?'↗':'✎'}</span></span><span class="expense-meta">${r.amountValid?money(r.units)+' 元':'金額待修正'} · <span data-count="${e.id}">${r.blocked?0:r.participantCount}</span> 人${r.issues.length?' · 待處理':''}</span>${payerNote(e,true)}</button></th>`;}).join('');
+    const titles=visible.map(e=>{const r=results.get(e.id);return `<th scope="col" class="expense-title" data-category="${e.category}" id="title-${e.id}"><button type="button" class="expense-open" id="edit-${e.id}" data-action="open-expense" data-expense="${e.id}" aria-label="${readOnly?'查看':'編輯'}費用 ${esc(e.name||'未命名費用')}"><span class="compact-expense-name" title="${esc(e.name||'未命名費用')}">${esc(e.name||'未命名費用')} <span aria-hidden="true">${readOnly?'↗':'✎'}</span></span><span class="expense-meta">${r.amountValid?money(r.units)+' 元':'金額待修正'} · <span data-count="${e.id}">${r.blocked?0:r.splitCount}</span> ${r.splitUnit}${r.issues.length?' · 待處理':''}</span>${payerNote(e,true)}</button></th>`;}).join('');
     const rows=state.members.map((m,i)=>`<tr><th scope="row" class="name-cell"><span class="person-label ${C.isNamed(m)?'':'muted'}">${esc(memberName(m))}</span><span class="person-index">${i+1} ${!C.isNamed(m)?'· 不列入分攤':C.familySize(m)>1?`· 代表 ${C.familySize(m)} 人`:''}</span></th>
       ${visible.map(e=>{const r=results.get(e.id), exempt=C.isCar(e)&&d.useCar&&d.drivers.includes(m.id)&&C.isNamed(m);return `<td><div class="participation"><label><input type="checkbox" id="part-${e.id}-${m.id}" data-field="participation" data-person="${m.id}" data-expense="${e.id}" aria-label="${esc(memberName(m))} 參與 ${esc(e.name||'未命名費用')} 費用 ${d.expenses.indexOf(e)+1}" ${e.participantIds.includes(m.id)?'checked':''} ${C.isNamed(m)&&!(C.isTransport(e)&&m.excludeTransport)?'':'disabled'}></label><div><span class="amount-label money ${r.shares[m.id]?'':'cell-zero'}" data-share="${e.id}-${m.id}">${money(r.shares[m.id])}</span><span class="cell-note">${C.isTransport(e)&&m.excludeTransport?'交通自理 · 不計費':exempt?'司機免車資':C.isCar(e)&&!d.useCar?'當日未用車':!C.isNamed(m)?'待填姓名':r.blocked?'待處理':''}</span></div></div></td>`;}).join('')}</tr>`).join('');
     const issues=visible.reduce((n,e)=>n+results.get(e.id).issues.length,0), total=visible.reduce((n,e)=>n+results.get(e.id).units,0), allocated=visible.reduce((n,e)=>n+results.get(e.id).allocated,0);

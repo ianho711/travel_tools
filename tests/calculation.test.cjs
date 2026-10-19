@@ -224,7 +224,7 @@ test('匯入格式、版本、ID 重複、未知參照、錯誤型別及人數�
   const original = C.example(), backup = C.encode(original);
   assert.throws(() => C.decode('{bad json'), /JSON/);
   const invalid = [
-    s => { s.version = 9; },
+    s => { s.version = 999; },
     s => { s.members[1].id = s.members[0].id; },
     s => { s.days[1].id = s.days[0].id; },
     s => { s.days[0].expenses[1].id = s.days[0].expenses[0].id; },
@@ -920,4 +920,55 @@ test('version7備份升級保留實付與優惠原值、ID、半天及代墊來�
   assert.equal(restored.carExpenses[0].id,e.id);assert.equal(restored.carExpenses[0].amount,'5250');assert.equal(restored.carExpenses[0].discount,'400');
   assert.equal(restored.carExpenses[0].payerId,e.payerId);assert.equal(json(restored.carExpenses[0].rides),json(e.rides));
   assert.equal(C.summarize(restored).people[0].advanced,52500);assert.equal(json(C.decode(C.encode(restored))),json(restored));
+});
+
+test('老師7人與家庭2人各算1組，900元各付450；按人數仍為700與200',()=>{
+  const s=fixture(2,1);s.members[0].count=7;s.members[1].count=2;
+  const e=fill(s,0,'lunch','900',[0,1]);
+  assert.equal(json(shares(s,calc(s,0,e))),json([7000,2000]));e.splitMode='groups';const r=calc(s,0,e);
+  assert.equal(json(shares(s,r)),json([4500,4500]));assert.equal(r.splitCount,2);assert.equal(r.participantCount,9);assert.equal(r.splitUnit,'組');assert.equal(C.summarize(s).people[0].advanced,9000);
+});
+
+test('13筆代表共24人，全選按13組均分1300元，每組100且不修改代表人數',()=>{
+  const s=fixture(13,1),counts=[7,2,2,1,1,2,1,1,1,1,2,2,1];s.members.forEach((m,i)=>m.count=counts[i]);
+  const e=fill(s,0,'other','1300',Array.from({length:13},(_,i)=>i));e.splitMode='groups';const r=calc(s,0,e);
+  assert.equal(r.participantCount,24);assert.equal(r.splitCount,13);assert.ok(shares(s,r).every(v=>v===1000));assert.equal(totalShares(r),13000);assert.equal(json(s.members.map(m=>m.count)),json(counts));
+});
+
+test('按組只收具名已勾選的組，100元三組尾差33.4／33.3／33.3，空白及零元安全',()=>{
+  const s=fixture(4,1);s.members.forEach((m,i)=>m.count=[7,2,1,100][i]);s.members[3].name='';
+  const e=fill(s,0,'dinner','100',[3,2,1,0]);e.splitMode='groups';let r=calc(s,0,e);assert.equal(json(shares(s,r)),json([334,333,333,0]));
+  s.members[0].count=100;assert.equal(json(shares(s,calc(s,0,e))),json([334,333,333,0]));
+  e.participantIds=[s.members[3].id];r=calc(s,0,e);assert.equal(r.allocated,0);assert.ok(r.issues.some(i=>i.code==='no-participants'));
+  e.amount='';r=calc(s,0,e);assert.equal(r.blocked,false);assert.equal(r.allocated,0);assert.equal(r.splitCount,0);
+});
+
+test('每餐每天各自選按人或按組，司機正常付餐費，交通人天與代墊不受影響',()=>{
+  const s=drivenTrip(3,2);s.members[1].count=7;s.members[2].count=2;
+  const fuel=tripCar(s,'900',[[0,1,2],[0,1,2]]),before=C.calculateTripExpense(s,fuel);
+  const group=fill(s,0,'lunch','900',[1,2]);group.splitMode='groups';const meal=fill(s,0,'dinner','900',[1,2]);fill(s,1,'lunch','900',[1,2]);
+  assert.equal(json(shares(s,calc(s,0,group))),json([0,4500,4500]));assert.equal(json(shares(s,calc(s,0,meal))),json([0,7000,2000]));
+  assert.equal(json(C.calculateTripExpense(s,fuel)),json(before));const driverMeal=fill(s,0,'breakfast','300',[0,1,2]);driverMeal.splitMode='groups';assert.equal(json(shares(s,calc(s,0,driverMeal))),json([1000,1000,1000]));
+  assert.equal(C.summarize(s).people[0].advanced,39000);
+});
+
+test('按組JSON與改名保留ID、分攤、代墊及預收；version8舊備份一律補按人數',()=>{
+  const s=fixture(2,1);s.members[0].count=7;s.members[1].count=2;const e=fill(s,0,'other','900',[0,1],1);e.splitMode='groups';ledger(s,0,'payment','1000');
+  s.members[0].name='改名後';const restored=C.decode(C.encode(s));assert.equal(json(restored),json(s));assert.equal(json(C.summarize(restored)),json(C.summarize(s)));
+  const old=JSON.parse(C.encode(s));old.version=8;old.days.forEach(d=>d.expenses.forEach(e=>delete e.splitMode));const upgraded=C.decode(JSON.stringify(old));
+  assert.equal(upgraded.days[0].expenses.find(e=>e.id===s.days[0].expenses[6].id)?.splitMode,'people');assert.equal(C.summarize(upgraded).people[0].other,7000);assert.equal(C.summarize(upgraded).people[1].advanced,9000);
+});
+
+test('拒絕無效分攤方式及把交通改按組的備份，失敗不覆蓋原帳',()=>{
+  const s=fixture(2,1),backup=C.encode(s);
+  for(const mode of ['',null,1,true,{},'teacher','group']){const bad=JSON.parse(backup);bad.days[0].expenses[0].splitMode=mode;assert.throws(()=>C.validateState(bad),/分攤方式/);assert.equal(C.encode(s),backup);}
+  for(const category of ['fuel','rental','parking']){const bad=JSON.parse(backup);bad.days[0].expenses.find(e=>e.category===category).splitMode='groups';assert.throws(()=>C.validateState(bad),/交通費/);}
+});
+
+test('按組各種人數與0.1元金額逐筆守恆，代墊／收退款不乘組數或人數',()=>{
+  for(const count of [1,3,13,30])for(const amount of ['0','0.1','0.2','100','100000000']){
+    const s=fixture(count,1);s.members.forEach((m,i)=>m.count=i%2?2:7);
+    const e=fill(s,0,'other',amount,Array.from({length:count},(_,i)=>i));e.splitMode='groups';const r=calc(s,0,e),units=C.parseAmount(amount).units;
+    assert.equal(totalShares(r),units);assert.ok(shares(s,r).every(Number.isSafeInteger));assert.equal(Math.max(...shares(s,r))-Math.min(...shares(s,r))<=1,true);assert.equal(C.summarize(s).people[0].advanced,units);
+  }
 });

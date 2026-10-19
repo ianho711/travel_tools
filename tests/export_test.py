@@ -54,6 +54,8 @@ s=base(3,1);s.days[0].useCar=true;s.days[0].drivers=[s.members[0].id];const half
 s=base(3,2);s.members[1].count=4;s.members[2].count=2;s.days.forEach(d=>{d.useCar=true;d.drivers=[s.members[0].id];});s.days[1].drivers.push(s.members[1].id);const halfFamily=pool(s,'750',[[0,1,2],[0,1,2]],'rental');halfFamily.discount='100';halfFamily.rides[0].halfDayIds=[s.members[1].id];halfFamily.rides[1].halfDayIds=[s.members[1].id,s.members[2].id];add('half_day_family_driver_discount',s);
 s=base(3,2);s.days.forEach(d=>{d.useCar=true;d.drivers=[s.members[0].id];});const halfAverage=pool(s,'100',[[0,1,2],[0,1,2]],'fuel','day-average');halfAverage.rides[0].halfDayIds=[s.members[2].id];halfAverage.rides[1].halfDayIds=[s.members[1].id];add('half_day_daily_average',s);
 s=base(3,1);s.days[0].useCar=true;s.days[0].drivers=[s.members[0].id];const paid5250=pool(s,'5250',[[0,1,2]],'rental');paid5250.discount='400';paid5250.payerId=s.members[1].id;add('actual_advance_5250_income_400',s);
+s=base(2,1);s.members[0].count=7;s.members[1].count=2;fee(s,0,'breakfast','900',[0,1]);const groupMeal=fee(s,0,'lunch','900',[0,1]);groupMeal.splitMode='groups';const groupOther=fee(s,0,'other','100',[0,1]);groupOther.splitMode='groups';add('mixed_people_and_group_fees',s);
+s=base(13,1);const representativeCounts=[7,2,2,1,1,2,1,1,1,1,2,2,1];s.members.forEach((m,i)=>m.count=representativeCounts[i]);const group13=fee(s,0,'lunch','1300',Array.from({length:13},(_,i)=>i));group13.splitMode='groups';add('thirteen_groups_twentyfour_people',s);
 fs.writeFileSync(output+'/fixtures.json',JSON.stringify(fixtures));
 '''
 
@@ -93,8 +95,8 @@ def main():
         assert units(ov['J3'].value)==summary['cashExpense']
         assert units(ov['L3'].value)==summary['income']
         assert summary['cashExpense']-summary['income']==summary['total']
-        assert 'v1.8.1' in ov['A1'].value
-        assert wb['使用說明']['B3'].value=='v1.8.1'
+        assert 'v1.9.0' in ov['A1'].value
+        assert wb['使用說明']['B3'].value=='v1.9.0'
         assert units(ov['D3'].value)==summary['allocated']
         assert units(ov['F3'].value)==summary['difference']
         assert ov['H3'].value==len(summary['issues'])
@@ -144,6 +146,9 @@ def main():
         for row,(day,e) in zip(meal_rows,expected_meals):
             expected='、'.join(m['name']+(f'（代表{m["count"]}人）' if m['count']>1 else '') for m in named if m['id'] in e['participantIds']) or '尚未勾選'
             assert row[0]==day['name'] and row[1]==e['name'] and row[3]==expected
+            result=next(r for r in summary['expenses'] if r['expenseId']==e['id'])
+            assert row[6]==('按組數（每列姓名1組）' if e['splitMode']=='groups' else '按人數')
+            assert row[7]==(0 if result['blocked'] else result['splitCount'])
         personal=wb['個人紀錄']
         assert personal.max_row==3+len(s['ledger'])
         for i,e in enumerate(s['ledger'],4):
@@ -203,6 +208,14 @@ def main():
             assert units(fleet.cell(vi,2).value)==rent
             assert units(fleet.cell(vi,3).value)==gas
             assert units(fleet.cell(vi,4).value)==rent+gas
+        if f['name']=='mixed_people_and_group_fees':
+            daily=wb.worksheets[2]
+            assert daily['C12'].value==700 and daily['E12'].value==450 and daily['I12'].value==50
+            assert daily['D8'].value==9 and '按組數，共2組' in daily['D9'].value
+            assert wb['每餐參與名單']['G5'].value=='按組數（每列姓名1組）' and wb['每餐參與名單']['H5'].value==2
+        if f['name']=='thirteen_groups_twentyfour_people':
+            assert wb['每餐參與名單']['E5'].value==24 and wb['每餐參與名單']['H5'].value==13
+            assert all(wb.worksheets[2].cell(12+i,5).value==100 for i in range(13))
         if f['name']=='actual_advance_5250_income_400':
             assert ov['B3'].value==4850 and ov['J3'].value==5250 and ov['L3'].value==400
             assert ov['I8'].value==5250 and wb['個人結算']['H5'].value==5250

@@ -60,8 +60,8 @@ def main():
 
             context.route('**/*', route_request)
             page.goto(url)
-            expect(page).to_have_title('旅伴帳本 v1.8.1｜旅遊費用分攤')
-            expect(page.locator('#app-version')).to_have_text('v1.8.1')
+            expect(page).to_have_title('旅伴帳本 v1.9.0｜旅遊費用分攤')
+            expect(page.locator('#app-version')).to_have_text('v1.9.0')
             expect(page.get_by_role('tab')).to_have_count(7)
             expect(page.locator('#total-expense')).to_have_text('0.0元')
             expect(page.locator('#roster-summary')).to_contain_text('0 位已填姓名 / 25 個名額')
@@ -461,7 +461,7 @@ def main():
             download.save_as(backup)
             assert json.loads(backup.read_text()) == before_export
             before_invalid = state()
-            for payload in [b'{bad json', b'{"version":9}', json.dumps({**before_export, 'members': []}).encode()]:
+            for payload in [b'{bad json', b'{"version":999}', json.dumps({**before_export, 'members': []}).encode()]:
                 page.locator('#import-file').set_input_files({'name': 'invalid.json', 'mimeType': 'application/json', 'buffer': payload})
                 expect(page.locator('#flash')).to_contain_text('匯入失敗，原資料未變更')
                 assert state() == before_invalid
@@ -488,7 +488,7 @@ def main():
             editor_state = state()
             shared = context.new_page()
             shared.goto(url.replace('index.html', 'shared-view.html'))
-            expect(shared).to_have_title('旅伴帳本 v1.8.1｜唯讀旅遊費用')
+            expect(shared).to_have_title('旅伴帳本 v1.9.0｜唯讀旅遊費用')
             expect(shared.locator('.tools')).to_be_hidden()
             expect(shared.locator('#roster')).to_be_hidden()
             expect(shared.locator('[data-action="add-day"]')).to_be_hidden()
@@ -1355,18 +1355,18 @@ def main():
             assert report['整趟車資']['J4'].value==5250
             assert report['整趟總覽']['J3'].value==6310 and report['整趟總覽']['L3'].value==400
             assert report['個人結算']['H4'].value==6010 and report['個人結算']['M4'].value==1654.3
-            assert 'v1.8.1' in report['整趟總覽']['A1'].value
-            assert report['使用說明']['B3'].value=='v1.8.1'
+            assert 'v1.9.0' in report['整趟總覽']['A1'].value
+            assert report['使用說明']['B3'].value=='v1.9.0'
             with page.expect_download() as info:page.get_by_role('button',name='匯出唯讀網頁',exact=True).click()
             income_view=artifacts/'rental-income-view.html';info.value.save_as(income_view)
             context.route('**/rental-income-view.html',lambda r:r.fulfill(path=str(income_view),content_type='text/html; charset=utf-8'))
             ir=context.new_page();ir.goto(url.replace('index.html','rental-income-view.html'))
-            expect(ir).to_have_title('旅伴帳本 v1.8.1｜唯讀旅遊費用')
-            expect(ir.locator('#app-version')).to_have_text('v1.8.1')
+            expect(ir).to_have_title('旅伴帳本 v1.9.0｜唯讀旅遊費用')
+            expect(ir.locator('#app-version')).to_have_text('v1.9.0')
             expect(ir.locator('#total-income')).to_have_text('400.0')
             ir.locator('#tab-personal').click();ir.locator('#personal-person').select_option(fa)
             expect(ir.locator('[data-personal="advanced"]')).to_have_text('6,010.0 元');ir.close()
-            record('收入與全額代墊可保存還原及匯出，頁面／分頁標題／唯讀網頁／XLSX一致顯示v1.8.1')
+            record('收入與全額代墊可保存還原及匯出，頁面／分頁標題／唯讀網頁／XLSX一致顯示v1.9.0')
 
             # Names are visible at the original costs and the prepaid group-payment row.
             current=state();rent_cost=next(e for e in current['carExpenses'] if e['category']=='rental')
@@ -1412,6 +1412,98 @@ def main():
             page.screenshot(path=str(artifacts/'visible-payers-mobile.png'),full_page=True)
             page.set_viewport_size({'width':1440,'height':1000})
             record('租金／油錢／每日費用直接顯示代墊者，個人代墊明細前移；改名安全同步、空白未指定清楚提示，唯讀及手機正確且標題仍不超過64px')
+
+            # One checked representative = one paying group for this particular invitation.
+            dialog(lambda:page.get_by_role('button',name='重設全部',exact=True).click())
+            roster();group_base=state();group_counts=[7,2,2,1,1,2,1,1,1,1,2,2,1]
+            group_ids=[m['id'] for m in group_base['members'][:13]]
+            for i,pid in enumerate(group_ids):
+                page.locator('#name-'+pid).fill('老師' if i==0 else '代表'+str(i+1))
+                page.locator('#count-'+pid).fill(str(group_counts[i]))
+            page.locator(f'[data-field="exclude-transport"][data-person="{group_ids[0]}"]').check()
+            roster(False);group_day=state()['days'][0]['id'];tab(group_day);before_group=state()
+            page.get_by_role('button',name='＋ 新增其他費用',exact=True).click()
+            page.locator('[data-field="expense-name"]').fill('招待社大同學與辦公室人員')
+            page.locator('[data-field="amount"]').fill('1300')
+            page.locator('[data-field="payer"]').select_option(group_ids[0])
+            expect(page.locator('#expense-split-mode')).to_have_value('people')
+            page.locator('#expense-split-mode').select_option('groups')
+            page.get_by_role('button',name='全選',exact=True).click()
+            expect(page.locator('#expense-preview')).to_contain_text('分攤 13 組')
+            expect(page.locator(f'[data-draft-member="{group_ids[0]}"]')).to_have_text('老師（7人 · 1組）')
+            assert page.locator('#expense-dialog [data-field="draft-participation"]:checked').count()==13
+            assert state()==before_group
+            page.get_by_role('button',name='取消',exact=True).click();assert state()==before_group
+            page.get_by_role('button',name='＋ 新增其他費用',exact=True).click()
+            group_fee=page.locator('#expense-dialog').get_attribute('data-expense')
+            page.locator('[data-field="expense-name"]').fill('招待社大同學與辦公室人員')
+            page.locator('[data-field="amount"]').fill('1300');page.locator('[data-field="payer"]').select_option(group_ids[0])
+            page.locator('#expense-split-mode').select_option('groups');page.get_by_role('button',name='全選',exact=True).click()
+            save_fee()
+            for pid in group_ids:share(group_fee,pid,'100.0')
+            expect(page.locator('#title-'+group_fee)).to_contain_text('13 組')
+            open_fee(group_fee);page.locator('[data-field="amount"]').fill('100')
+            page.get_by_role('button',name='取消全選',exact=True).click()
+            for pid in group_ids[:3]:page.locator(f'[data-field="draft-participation"][data-person="{pid}"]').check()
+            expect(page.locator('#expense-preview')).to_contain_text('分攤 3 組');save_fee()
+            for pid,expected in zip(group_ids[:4],['33.4','33.3','33.3','0.0']):share(group_fee,pid,expected)
+            open_fee(group_fee);page.locator('[data-field="amount"]').fill('1300');page.get_by_role('button',name='全選',exact=True).click();save_fee()
+            group_meal=next(e['id'] for e in state()['days'][0]['expenses'] if e['category']=='breakfast')
+            set_fee(group_meal,'900',group_ids[:2],group_ids[1]);share(group_meal,group_ids[0],'700.0');share(group_meal,group_ids[1],'200.0')
+            open_fee(group_fee);page.locator('#expense-split-mode').select_option('people')
+            expect(page.locator('#expense-preview')).to_contain_text('分攤 24 人')
+            page.get_by_role('button',name='取消',exact=True).click()
+            share(group_fee,group_ids[0],'100.0')
+            record('13筆24人可按13組分攤招待費，每位代表只算1組；逐一勾選3組得33.4／33.3／33.3，餐費仍按7:2分攤，取消不改帳')
+            roster();page.locator('#count-'+group_ids[0]).fill('8');roster(False)
+            share(group_fee,group_ids[0],'100.0');share(group_meal,group_ids[0],'720.0')
+            roster();page.locator('#count-'+group_ids[0]).fill('7');page.locator('#name-'+group_ids[0]).fill('老師改名');roster(False)
+            share(group_fee,group_ids[0],'100.0');expect(page.locator(f'[data-payer="{group_fee}"]')).to_have_text('代墊：老師改名')
+            group_saved=state()
+            with page.expect_download() as info:page.get_by_role('button',name='匯出 JSON',exact=True).click()
+            group_json=artifacts/'representative-group-backup.json';info.value.save_as(group_json)
+            page.reload();assert state()==group_saved
+            bad=json.loads(group_json.read_text());next(e for e in bad['days'][0]['expenses'] if e['id']==group_fee)['splitMode']='roles'
+            bad_file=artifacts/'bad-group-mode.json';bad_file.write_text(json.dumps(bad,ensure_ascii=False))
+            page.locator('#import-file').set_input_files(str(bad_file));expect(page.locator('#flash')).to_contain_text('分攤方式');assert state()==group_saved
+            dialog(lambda:page.get_by_role('button',name='重設全部',exact=True).click())
+            dialog(lambda:page.locator('#import-file').set_input_files(str(group_json)));assert state()==group_saved
+            with page.expect_download() as info:page.get_by_role('button',name='匯出試算表',exact=True).click()
+            group_xlsx=artifacts/'representative-group-report.xlsx';info.value.save_as(group_xlsx);report=load_workbook(group_xlsx)
+            group_daily=report[group_saved['days'][0]['name']]
+            fee_col=next(c.column for c in group_daily[5] if c.value=='招待社大同學與辦公室人員')
+            assert '按組數，共13組' in group_daily.cell(9,fee_col).value
+            assert group_daily.cell(12,fee_col+1).value==100 and group_daily['C12'].value==700
+            assert report['每餐參與名單']['G4'].value=='按人數' and report['每餐參與名單']['H4'].value==9
+            assert report['成員名單']['B4'].value==7
+            assert report['個人結算']['H4'].value==1300
+            page.screenshot(path=str(artifacts/'group-fee-daily.png'),full_page=True)
+            record('改人數不改按組費用，原餐費照人數重算；改名與JSON保存還原保留ID和模式，錯誤匯入不覆蓋，XLSX清楚標示分攤方式與組數')
+            with page.expect_download() as info:page.get_by_role('button',name='匯出唯讀網頁',exact=True).click()
+            group_view=artifacts/'representative-group-view.html';info.value.save_as(group_view)
+            context.route('**/representative-group-view.html',lambda r:r.fulfill(path=str(group_view),content_type='text/html; charset=utf-8'))
+            gv=context.new_page();gv.goto(url.replace('index.html','representative-group-view.html'));gv.locator('#tab-'+group_day).click();gv.locator('#edit-'+group_fee).click()
+            expect(gv.locator('#expense-split-mode')).to_have_value('groups');expect(gv.locator('#expense-split-mode')).to_be_disabled()
+            expect(gv.locator('#expense-preview')).to_contain_text('分攤 13 組')
+            assert gv.locator('#expense-dialog input[type="checkbox"]:not(:disabled)').count()==0;gv.close()
+            page.set_viewport_size({'width':390,'height':844});open_fee(group_fee)
+            page.locator('#expense-split-mode').select_option('people');expect(page.locator('#expense-preview')).to_contain_text('24 人')
+            page.locator('#expense-split-mode').select_option('groups')
+            group_check=page.locator(f'[data-field="draft-participation"][data-person="{group_ids[0]}"]')
+            group_check.uncheck();expect(page.locator('#expense-preview')).to_contain_text('分攤 12 組')
+            group_check.check();expect(page.locator('#expense-preview')).to_contain_text('分攤 13 組')
+            assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
+            page.screenshot(path=str(artifacts/'group-fee-mobile.png'));save_fee();page.reload()
+            mobile_saved=state();expected_mobile=json.loads(json.dumps(group_saved))
+            mobile_fee=next(e for e in mobile_saved['days'][0]['expenses'] if e['id']==group_fee)
+            expected_fee=next(e for e in expected_mobile['days'][0]['expenses'] if e['id']==group_fee)
+            assert set(mobile_fee['participantIds'])==set(expected_fee['participantIds'])
+            expected_fee['participantIds']=mobile_fee['participantIds'];assert mobile_saved==expected_mobile
+            for pid in group_ids:share(group_fee,pid,'100.0')
+            assert page.locator('.daily-compact-row').bounding_box()['height']<=64
+            page.set_viewport_size({'width':1440,'height':1000});open_fee(group_fee)
+            page.screenshot(path=str(artifacts/'group-fee-dialog.png'));page.get_by_role('button',name='取消',exact=True).click()
+            record('唯讀保留按組模式及金額但不能改；390px手機可選每位代表、切換方式、儲存刷新，固定標題仍不超過64px')
 
             assert not errors, errors
             assert not external_requests, external_requests
