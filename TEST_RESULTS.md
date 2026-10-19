@@ -2,6 +2,8 @@
 
 測試日期：2026-10-19（Asia/Taipei）。實際執行 HTML 內的運算引擎，並以 Chromium 154 進行瀏覽器操作；不是僅檢查程式碼或計畫。
 
+配色更新後已重跑全部 29 組瀏覽器情境，並檢視桌面、390px 手機、個人結算及寬版費用視窗的截圖。暖白／藏青／陶橘／湖水藍配色、分色卡片及紙飛機圖示均不使用 CDN 或外部字型。另以內建範例產出 [桌面預覽](docs/preview-desktop.png) 與 [手機預覽](docs/preview-mobile.png)，未放入私人帳目。
+
 ## 計算與備份：32 項通過
 
 執行：`node --test tests/calculation.test.cjs`（Node.js 24）。

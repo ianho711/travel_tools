@@ -2,6 +2,12 @@
 
 你在 HTML 填費用、勾參與者，工具完成分攤後匯出 `.xlsx`，再用 Google 試算表分享給旅伴看。不需要登入網頁、後端、外部 API、CDN 或 Apps Script。
 
+介面採暖白、藏青、陶橘與湖水藍的旅遊手帳風格，搭配紙飛機標誌、分色結算卡片與精簡表格。以下畫面使用內建範例；第一次開啟仍是空白帳本。
+
+![桌面版畫面預覽](docs/preview-desktop.png)
+
+[查看手機版預覽](docs/preview-mobile.png)
+
 ## 開始使用
 
 1. [下載 index.html](https://github.com/ianho711/travel_tools/raw/refs/heads/main/index.html)，存到電腦後用瀏覽器開啟。GitHub 的檔案預覽頁不會直接執行 HTML。
