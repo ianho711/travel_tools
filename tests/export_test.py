@@ -43,6 +43,7 @@ s=base(4,2);s.days.forEach(d=>{d.useCar=true;d.drivers=[s.members[0].id];});pool
 s=base(4,4);s.members[3].excludeTransport=true;s.days.forEach(d=>{d.useCar=true;d.drivers=[s.members[0].id];});
 for(let i=0;i<3;i++){const vehicle={id:C.id('v'),name:['大車1','大車2','小車'][i]};s.vehicles.push(vehicle);for(const [category,amount] of [['rental',['7000','6500','5250'][i]],['fuel',['1200','1200','800'][i]]]){const fee=pool(s,amount,[[0,1,2,3],[0,1,2,3],[0,1,3],[0,1,3]],category);fee.vehicleId=vehicle.id;fee.name=vehicle.name+' '+C.CATEGORIES[category];}}
 s.transportRides=JSON.parse(JSON.stringify(s.carExpenses[0].rides));fee(s,0,'dinner','100',[0,1,2,3]);add('three_vehicles_exclude_private_charter',s);
+s=base(3,2);s.days.forEach(d=>{d.useCar=true;d.drivers=[s.members[0].id];});pool(s,'600',[[0,1,2],[0,1]],'rental');fee(s,0,'parking','90',[0,1,2]);const meal=C.expense('meal');Object.assign(meal,{name:'10/16 聚餐',amount:'120',payerId:s.members[0].id,participantIds:s.members.map(m=>m.id)});s.days[0].expenses.push(meal);entry(s,1,'payment','100');entry(s,1,'adjustment','5',null,'minus');add('separate_transport_and_generic_meal_settlement',s);
 fs.writeFileSync(output+'/fixtures.json',JSON.stringify(fixtures));
 '''
 
@@ -88,26 +89,42 @@ def main():
             assert ov.cell(7+i,1).value==p['name']
             for ci,key in enumerate(['meals','fuel','rental','other','personal','adjustment','total','advanced','paid','refunded','pay','receive'],2):
                 assert units(ov.cell(7+i,ci).value)==p[key],(f['name'],p['id'],key)
+        settlement=wb['個人結算']
+        for ri,p in enumerate(summary['people'],4):
+            assert settlement.cell(ri,1).value==p['name']
+            for ci,key in enumerate(['meals','dailyOther','transport','personal','adjustment','total','advanced','transportAdvanced','paid','refunded','pay','receive'],2):
+                assert units(settlement.cell(ri,ci).value)==(p['daily']-p['meals'] if key=='dailyOther' else p[key])
+            assert p['total']==p['daily']+p['transport']+p['personal']+p['adjustment']
+        for di,day in enumerate(s['days'],4):
+            assert wb['用車與司機'].cell(di,1).value==day['name']
+            assert wb['用車與司機'].cell(di,2).value==('是' if day['useCar'] else '否')
+        daily_traffic=list(wb['每日交通費'].iter_rows(min_row=4,values_only=True))
+        expected=[(d,e,m) for d in s['days'] for e in d['expenses'] if e['category'] in ('fuel','rental','parking') for m in named]
+        assert len(daily_traffic)==len(expected)
+        for row,(day,e,member) in zip(daily_traffic,expected):
+            r=next(r for r in summary['transport']['expenses'] if r['expenseId']==e['id'])
+            assert row[0]==day['name'] and row[1]==e['name'] and row[4]==member['name']
+            assert units(row[7])==r['shares'][member['id']]
         for di,day in enumerate(s['days']):
             sh=wb.worksheets[2+di]
-            assert sh.freeze_panes=='C13'
-            for ei,e in enumerate(day['expenses']):
+            assert sh.freeze_panes=='B12'
+            for ei,e in enumerate(e for e in day['expenses'] if e['category'] not in ('fuel','rental','parking')):
                 result=next(r for r in summary['expenses'] if r['expenseId']==e['id'])
                 total=0
                 for mi,member in enumerate(named):
-                    r=13+mi
+                    r=12+mi
                     assert sh.cell(r,1).value==member['name']
-                    assert sh.cell(r,3+2*ei).value==('參與' if member['id'] in e['participantIds'] else '未參與')
-                    actual=units(sh.cell(r,4+2*ei).value)
+                    assert sh.cell(r,2+2*ei).value==('參與' if member['id'] in e['participantIds'] else '未參與')
+                    actual=units(sh.cell(r,3+2*ei).value)
                     assert actual==result['shares'][member['id']]
                     total+=actual
                 assert total==result['allocated']
         meal_rows=list(wb['每餐參與名單'].iter_rows(min_row=4,values_only=True))
-        expected_meals=[(day,e) for day in s['days'] for e in day['expenses'] if e['category'] in ['breakfast','lunch','dinner']]
+        expected_meals=[(day,e) for day in s['days'] for e in day['expenses'] if e['category'] in ['breakfast','lunch','dinner','meal']]
         assert len(meal_rows)==len(expected_meals)
         for row,(day,e) in zip(meal_rows,expected_meals):
             expected='、'.join(m['name'] for m in named if m['id'] in e['participantIds']) or '尚未勾選'
-            assert row[0]==day['name'] and row[1]==e['name'] and row[4]==expected
+            assert row[0]==day['name'] and row[1]==e['name'] and row[3]==expected
         personal=wb['個人紀錄']
         assert personal.max_row==3+len(s['ledger'])
         for i,e in enumerate(s['ledger'],4):
@@ -128,7 +145,7 @@ def main():
         for ei,e in enumerate(s['carExpenses'],4):
             result=next(r for r in summary['expenses'] if r['expenseId']==e['id'])
             assert pool_sheet.cell(ei,1).value==e['name']
-            assert units(pool_sheet.cell(ei,4).value)==result['units']
+            assert units(pool_sheet.cell(ei,3).value)==result['units']
             member_sums={m['id']:0 for m in named}
             for day in result['days']:
                 for m in named:

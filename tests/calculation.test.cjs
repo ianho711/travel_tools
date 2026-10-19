@@ -604,3 +604,55 @@ test('交通自理型別、未知車輛、重複車輛費用與名單參照錯�
     s=>{s.transportRides[0].dayId='unknown';},s=>{s.transportRides[0].participantIds=['unknown'];}
   ]) {const bad=JSON.parse(backup);mutate(bad);assert.throws(()=>C.validateState(bad));assert.equal(C.encode(s),backup);}
 });
+
+test('交通獨立結算涵蓋每日停車與舊車資，只在個人總額與代墊各帶入一次', () => {
+  const s=drivenTrip(4,2);s.members[3].excludeTransport=true;
+  tripCar(s,'600',[[0,1,2,3],[0,1,2,3]],'rental');
+  const gas=tripCar(s,'120',[[0,1,2,3],[0,1,2,3]],'fuel');gas.payerId=s.members[1].id;
+  fill(s,0,'parking','90',[0,1,2,3],0);fill(s,1,'fuel','60',[0,1,2,3],1);
+  fill(s,0,'lunch','100',[0,1,2,3],0);
+  ledger(s,1,'charge','10',0);ledger(s,1,'payment','100');ledger(s,1,'adjustment','5',null,'minus');
+  const t=C.summarizeTransport(s),r=C.summarize(s),b=r.people[1];
+  assert.equal(t.total,8700);assert.equal(t.allocated,8700);assert.equal(t.difference,0);
+  assert.equal(t.people[1].total,4200);assert.equal(t.people[1].advanced,1800);
+  assert.equal(b.daily,250);assert.equal(b.transport,4200);assert.equal(b.transportAdvanced,1800);
+  assert.equal(b.total,4500);assert.equal(b.advanced,1800);assert.equal(b.pay,1700);
+  assert.equal(r.total,9800);assert.equal(r.allocated,9800);
+  assert.equal(r.expenses.length,new Set(r.expenses.map(e=>e.expenseId)).size);
+  assert.equal(r.people[3].transport,0);assert.equal(r.people[3].meals,250);
+  assert.deepEqual(JSON.parse(JSON.stringify(r.transport)),JSON.parse(JSON.stringify(t)));
+});
+
+test('餐費及個人調整不影響交通獨立帳，交通修正即更新個人且不複製個人紀錄', () => {
+  const s=drivenTrip(3,2),car=tripCar(s,'600',[[0,1,2],[0,1]],'rental');
+  const before=JSON.stringify(C.summarizeTransport(s));
+  fill(s,0,'dinner','90',[0,1,2],0);ledger(s,1,'adjustment','20');
+  assert.equal(JSON.stringify(C.summarizeTransport(s)),before);
+  assert.equal(C.summarize(s).people[1].transport,4000);
+  car.amount='900';assert.equal(C.summarize(s).people[1].transport,6000);
+  assert.equal(s.ledger.length,1);assert.equal(s.ledger[0].type,'adjustment');
+  const restored=C.decode(C.encode(s));assert.equal(C.summarize(restored).people[1].transport,6000);
+  assert.equal(JSON.stringify(C.summarize(restored)),JSON.stringify(C.summarize(s)));
+});
+
+test('交通獨立帳遇未用車或缺司機保留總額與代墊，修正後才帶入個人分攤', () => {
+  const s=drivenTrip(3,2),car=tripCar(s,'100',[[0,1,2],[0,1,2]]);
+  s.days[0].useCar=false;
+  let r=C.summarize(s);assert.equal(r.transport.total,1000);assert.equal(r.transport.difference,1000);
+  assert.equal(r.people[0].transportAdvanced,1000);assert.equal(r.people[1].transport,0);
+  s.days[0].useCar=true;r=C.summarize(s);assert.equal(r.transport.difference,0);assert.equal(r.people[1].transport,500);
+  s.days[1].drivers=[];r=C.summarize(s);assert.equal(r.people[1].transport,0);
+  assert.equal(car.amount,'100');assert.ok(r.transport.issues.some(i=>i.code==='missing-driver'));
+});
+
+test('每日新增只分餐費與其他；通用餐費正常彙總、司機照付，version3可保留升級', () => {
+  const s=drivenTrip(3,1),meal=C.expense('meal'),other=C.expense('other');
+  Object.assign(meal,{name:'10/16 聚餐',amount:'100',participantIds:s.members.map(m=>m.id),payerId:s.members[0].id});
+  Object.assign(other,{name:'門票',amount:'30',participantIds:[s.members[1].id],payerId:s.members[0].id});
+  s.days[0].expenses.push(meal,other);
+  const r=C.summarize(s);assert.equal(r.people[0].meals,334);assert.equal(r.people[1].meals,333);assert.equal(r.people[1].other,300);
+  assert.equal(r.people[1].transport,0);assert.equal(r.people[1].total,633);assert.equal(r.total,1300);
+  const restored=C.decode(C.encode(s));assert.equal(restored.days[0].expenses.at(-2).category,'meal');
+  const old=C.createTrip(3,1);old.version=3;old.members.forEach((m,i)=>m.name='舊成員'+i);
+  assert.equal(C.decode(JSON.stringify(old)).version,4);assert.deepEqual(C.decode(JSON.stringify(old)).days,old.days);
+});
