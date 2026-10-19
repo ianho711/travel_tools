@@ -24,10 +24,10 @@ const calc = (s, di, e) => C.calculateExpense(s, s.days[di], e);
 const shares = (s, r) => s.members.map(m => r.shares[m.id]);
 const totalShares = r => Object.values(r.shares).reduce((a, b) => a + b, 0);
 
-test('預設 30 個空白名額、10 天、每天 7 項費用，初始沒有假支出', () => {
+test('預設 25 個空白名額、4 天、每天 7 項費用，初始沒有假支出', () => {
   const s = C.createTrip();
-  assert.equal(s.members.length, 30);
-  assert.equal(s.days.length, 10);
+  assert.equal(s.members.length, 25);
+  assert.equal(s.days.length, 4);
   assert.ok(s.days.every(d => d.expenses.length === 7));
   assert.equal(C.summarize(s).total, 0);
   assert.equal(C.summarize(s).people.length, 0);
@@ -145,7 +145,7 @@ test('空白及全空格姓名不計人數，不作有效司機或代墊者，�
 });
 
 test('第 30 人可正常參與、計費、代墊，不受位元遮罩或索引限制', () => {
-  const s = C.createTrip();
+  const s = C.createTrip(30,10);
   s.members[0].name = 'A'; s.members[29].name = '第 30 位';
   const e = fill(s, 0, 'dinner', '100', [0, 29], 29);
   const r = calc(s, 0, e);

@@ -27,7 +27,7 @@ s=base();s.days[0].drivers=[s.members[0].id];fee(s,0,'fuel','100',[0,1,2]);add('
 s=base();s.days[0].useCar=true;fee(s,0,'fuel','100',[0,1,2]);add('missing_driver',s);
 s=base();fee(s,0,'lunch','100',[]);fee(s,0,'dinner','1.23',[0,1,2]);fee(s,0,'other','100',[0,1,2],null);add('invalid_and_missing_participants',s);
 s=base();s.members[0].name='   ';s.members[1].name='';fee(s,0,'lunch','100',[0,1,2],2);add('blank_names_excluded',s);
-s=C.createTrip();s.members[0].name='A';s.members[29].name='第30位';fee(s,0,'dinner','100',[0,29],29);add('person_30',s);
+s=C.createTrip(30,10);s.members[0].name='A';s.members[29].name='第30位';fee(s,0,'dinner','100',[0,29],29);add('person_30',s);
 s=C.example();s.members[0].name='改名後';add('rename_preserves_totals',s);
 s=base();s.members[0].name='=SUM(1,2)';s.members[1].name='小晴 & <同行者>';s.days[0].name='東京/京都:*?[]\\';s.days[1].name=s.days[0].name;s.days[0].expenses[0].name='"早餐" & 點心';fee(s,0,'breakfast','100',[0,1,2]);add('safe_text_and_sheet_names',s);
 s=base();fee(s,0,'breakfast','100',[0,1]);const e=C.expense('breakfast');Object.assign(e,{name:'加點早餐',amount:'30',participantIds:[s.members[1].id],payerId:s.members[1].id});s.days[0].expenses.push(e);add('duplicate_meals_independent',s);

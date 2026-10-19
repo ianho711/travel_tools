@@ -61,10 +61,16 @@ def main():
             context.route('**/*', route_request)
             page.goto(url)
             expect(page).to_have_title('旅伴帳本｜旅遊費用分攤')
-            expect(page.get_by_role('tab')).to_have_count(13)
+            expect(page.get_by_role('tab')).to_have_count(7)
             expect(page.locator('#total-expense')).to_have_text('0.0元')
-            expect(page.locator('#roster-summary')).to_contain_text('0 位已填姓名 / 30 個名額')
-            record('初始 30 人／10 天，無假支出，頁面無外部依賴')
+            expect(page.locator('#roster-summary')).to_contain_text('0 位已填姓名 / 25 個名額')
+            record('初始 25 人／4 天，無假支出，頁面無外部依賴')
+            page.locator('#tab-vehicles').click()
+            assert not page.locator('#daily-transport-extra').evaluate('(el)=>el.open')
+            page.reload()
+            assert not page.locator('#daily-transport-extra').evaluate('(el)=>el.open')
+            page.locator('#tab-overview').click()
+            record('每日交通支出預設收合且標示選填，重新整理仍無須設定；租車與油錢只填逐車區')
 
             def state():
                 return json.loads(page.evaluate('(key) => localStorage.getItem(key)', STORE))
@@ -102,6 +108,8 @@ def main():
                 cost = next(e for e in day['expenses'] if e['id'] == eid)
                 if cost['category'] in ('fuel','rental','parking'):
                     tab('vehicles')
+                    if not page.locator('#daily-transport-extra').evaluate('(el)=>el.open'):
+                        page.locator('#daily-transport-extra > summary').click()
                     if page.locator('#transport-day').input_value() != day['id']:
                         page.locator('#transport-day').select_option(day['id'])
                 else:
@@ -191,6 +199,9 @@ def main():
                 return message
 
             roster()
+            # Expand beyond the new default to retain explicit coverage of member 30.
+            for _ in range(5):
+                page.get_by_role('button',name='＋ 新增成員',exact=True).click()
             for i, name in enumerate(['阿安', '小晴', '阿哲']):
                 page.locator('[data-field="member-name"]').nth(i).fill(name)
             roster(False)
@@ -429,9 +440,9 @@ def main():
             field_day.fill('額外一天')
             expect(page.get_by_role('tab', name='額外一天', exact=True)).to_have_attribute('aria-selected', 'true')
             dialog(lambda: page.get_by_role('button', name='刪除此天', exact=True).click(), False)
-            assert len(state()['days']) == 11
+            assert len(state()['days']) == 5
             dialog(lambda: page.get_by_role('button', name='刪除此天', exact=True).click())
-            assert len(state()['days']) == 10
+            assert len(state()['days']) == 4
             record('人數與天數可增減，日期名稱同步，刪除已有資料需確認')
 
             tab('overview')
@@ -540,8 +551,8 @@ def main():
             assert len(state()['members']) == 4 and len(state()['days']) == 2
             dialog(lambda: page.get_by_role('button', name='重設全部', exact=True).click())
             expect(page.locator('#total-expense')).to_have_text('0.0元')
-            assert len(state()['members']) == 30 and len(state()['days']) == 10
-            record('載入範例有有效帳目且無待處理，重設確實恢復空白 30 人／10 天')
+            assert len(state()['members']) == 25 and len(state()['days']) == 4
+            record('載入範例有有效帳目且無待處理，重設確實恢復空白 25 人／4 天')
 
             # Whole-trip costs use ride-days; gasoline paid at return is never billed only to that day.
             roster()
@@ -788,7 +799,7 @@ def main():
             assert page.locator('#expense-dialog [data-field="category"]').count() == 0
             page.get_by_role('button',name='取消',exact=True).click()
             tab('vehicles')
-            expect(page.locator('[aria-label="交通用車與司機"] tbody tr')).to_have_count(10)
+            expect(page.locator('[aria-label="交通用車與司機"] tbody tr')).to_have_count(4)
             record('每日明細與新增費用完全沒有交通或司機欄位；每日用車、多位司機與停車費都在交通區')
             snapshot_before_other = state()
             tab(fleet_days[0])
