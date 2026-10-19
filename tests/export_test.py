@@ -47,6 +47,9 @@ s=base(3,2);s.days.forEach(d=>{d.useCar=true;d.drivers=[s.members[0].id];});pool
 s=base(2,1);s.members[0].count=2;fee(s,0,'dinner','100',[0,1]);add('family_meal_actual_people_and_remainder',s);
 s=base(3,4);s.members[0].count=4;s.members[1].count=2;s.days.forEach(d=>{d.useCar=true;d.drivers=[s.members[2].id];});pool(s,'900',[[0,1,2],[0,1,2],[0,2],[0,2]],'rental');const familyGas=pool(s,'300',[[0,1,2],[0,1,2],[0,2],[0,2]],'fuel');familyGas.payerId=s.members[1].id;fee(s,0,'breakfast','700',[0,1,2]);fee(s,0,'other','60',[0,1]);entry(s,0,'payment','100');entry(s,0,'adjustment','10');add('family_passenger_days_and_settlement',s);
 s=base(2,2);s.members[0].count=4;s.members[1].count=2;s.days.forEach((d,i)=>{d.useCar=true;d.drivers=[s.members[i].id];});pool(s,'1000',[[0,1],[0,1]]);fee(s,0,'dinner','600',[0,1]);fee(s,0,'parking','60',[0,1]);add('family_driver_only_one_person_exempt',s);
+s=base(3,2);s.days.forEach(d=>{d.useCar=true;d.drivers=[s.members[0].id];});const discountedVehicle={id:C.id('v'),name:'優惠租車'};s.vehicles.push(discountedVehicle);const discountedRent=pool(s,'7000',[[0,1,2],[0,1,2]],'rental');Object.assign(discountedRent,{vehicleId:discountedVehicle.id,discount:'400',discountNote:'點數 <折抵> =SUM(1,2)'});const discountedFuel=pool(s,'800',[[0,1,2],[0,1,2]],'fuel');discountedFuel.vehicleId=discountedVehicle.id;discountedFuel.payerId=s.members[1].id;add('rental_discount_vehicle_net_cost',s);
+s=base(3,1);const freeRent=pool(s,'100',[],'rental');freeRent.discount='100';add('rental_discount_full_waiver',s);
+s=base(3,1);s.days[0].useCar=true;s.days[0].drivers=[s.members[0].id];const invalidRent=pool(s,'100',[[0,1,2]],'rental');invalidRent.discount='101';invalidRent.discountNote='待核對';add('rental_discount_invalid_pending',s);
 fs.writeFileSync(output+'/fixtures.json',JSON.stringify(fixtures));
 '''
 
@@ -152,7 +155,17 @@ def main():
         for ei,e in enumerate(s['carExpenses'],4):
             result=next(r for r in summary['expenses'] if r['expenseId']==e['id'])
             assert pool_sheet.cell(ei,1).value==e['name']
-            assert units(pool_sheet.cell(ei,3).value)==result['units']
+            if result['amountValid']:
+                assert units(pool_sheet.cell(ei,3).value)==result['units']
+            else:
+                assert str(pool_sheet.cell(ei,3).value).startswith('待修正')
+            if e['category']=='rental':
+                if result['grossValid']:assert units(pool_sheet.cell(ei,7).value)==result['grossUnits']
+                if result['discountValid']:assert units(pool_sheet.cell(ei,8).value)==result['discountUnits']
+                if e['discountNote']:
+                    assert pool_sheet.cell(ei,9).value==e['discountNote']
+                else:
+                    assert pool_sheet.cell(ei,9).value in ('',None)
             member_sums={m['id']:0 for m in named}
             for day in result['days']:
                 for m in named:
@@ -178,6 +191,14 @@ def main():
             assert units(fleet.cell(vi,2).value)==rent
             assert units(fleet.cell(vi,3).value)==gas
             assert units(fleet.cell(vi,4).value)==rent+gas
+        if f['name']=='rental_discount_vehicle_net_cost':
+            assert fleet['B4'].value==6600 and fleet['C4'].value==800 and fleet['D4'].value==7400
+            assert fleet['H4'].value==7000 and fleet['I4'].value==400
+            assert fleet['J4'].value=='點數 <折抵> =SUM(1,2)' and fleet['J4'].data_type=='s'
+            assert ov['B3'].value==7400 and ov['I7'].value==6600
+        if f['name']=='rental_discount_invalid_pending':
+            assert ov['B3'].value==0 and ov['H3'].value>0
+            assert '優惠' in wb['待處理項目']['C3'].value
         if f['name']=='three_vehicles_exclude_private_charter':
             assert fleet['D7'].value==21950
             assert ov['B10'].value==25 and ov['C10'].value==0 and ov['D10'].value==0

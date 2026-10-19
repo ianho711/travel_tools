@@ -1157,6 +1157,82 @@ def main():
             roster(False);page.set_viewport_size({'width':1440,'height':1000})
             record('唯讀快照正確顯示家庭人數與結算；390px手機可編輯代表人數且沒有整頁溢出')
 
+            # Rental discounts reduce both the amount shared and the payer's actual advance.
+            discount_before=state();discount_vehicle=discount_before['vehicles'][0]['id']
+            rental_id=next(e['id'] for e in discount_before['carExpenses'] if e['category']=='rental')
+            tab('vehicles');page.locator(f'[data-action="edit-vehicle"][data-vehicle="{discount_vehicle}"]').click()
+            page.locator('#vehicle-rental-discount').fill('100');page.locator('#vehicle-rental-discount-note').fill('點數折抵')
+            expect(page.locator('#vehicle-rental-net')).to_have_text('800.0')
+            expect(page.locator('#vehicle-preview')).to_contain_text('本車合計 1,100.0 元')
+            page.get_by_role('button',name='取消',exact=True).click();assert state()==discount_before
+            page.locator(f'[data-action="edit-vehicle"][data-vehicle="{discount_vehicle}"]').click()
+            page.locator('#vehicle-rental-discount').fill('100');page.locator('#vehicle-rental-discount-note').fill('點數折抵')
+            page.get_by_role('button',name='儲存車輛',exact=True).click()
+            expect(page.locator(f'[data-fleet="{discount_vehicle}-rental-gross"]')).to_have_text('900.0')
+            expect(page.locator(f'[data-fleet="{discount_vehicle}-rental"]')).to_have_text('800.0')
+            expect(page.locator(f'[data-fleet="{discount_vehicle}-discount"]')).to_contain_text('100.0')
+            expect(page.locator('[data-transport="total"]')).to_have_text('1,100.0元')
+            tab('overview');expect(page.locator('#total-expense')).to_have_text('1,860.0元')
+            expect(page.locator('#total-difference')).to_have_text('0.0元')
+            tab('personal');page.locator('#personal-person').select_option(fa)
+            expect(page.locator('[data-personal-source="transport"]')).to_have_text('880.0')
+            expect(page.locator('[data-personal="advanced"]')).to_have_text('1,560.0 元')
+            expect(page.locator('[data-personal="receive"]')).to_have_text('330.0 元')
+            assert state()['ledger']==discount_before['ledger']
+            record('每台車可填原租金、優惠及說明，取消不寫入；實付租金、支出、代墊與家庭結算只扣一次優惠')
+            page.locator(f'[data-action="goto-expense"][data-expense="{rental_id}"]').click()
+            expect(page.locator('#discount-'+rental_id)).to_have_value('100')
+            page.locator('#discount-'+rental_id).fill('50');save_fee()
+            expect(page.locator(f'[data-fleet="{discount_vehicle}-rental"]')).to_have_text('850.0')
+            page.locator(f'[data-action="edit-vehicle"][data-vehicle="{discount_vehicle}"]').click()
+            page.locator('#vehicle-rental-discount').fill('1000')
+            expect(page.locator('#vehicle-rental-net')).to_have_text('待修正')
+            expect(page.locator('#vehicle-rental-discount')).to_have_attribute('aria-invalid','true')
+            page.get_by_role('button',name='儲存車輛',exact=True).click()
+            expect(page.locator(f'[data-fleet="{discount_vehicle}-rental"]')).to_have_text('待修正')
+            tab('overview');expect(page.locator('#pending-issues')).to_contain_text('不可超過原租金')
+            page.locator(f'[data-action="goto-expense"][data-expense="{rental_id}"]').click()
+            expect(page.locator('#discount-'+rental_id)).to_be_focused()
+            page.locator('#discount-'+rental_id).fill('900');save_fee()
+            expect(page.locator(f'[data-fleet="{discount_vehicle}-rental"]')).to_have_text('0.0')
+            expect(page.locator('[data-transport="rental"]')).to_have_text('0.0元')
+            page.locator(f'[data-action="edit-vehicle"][data-vehicle="{discount_vehicle}"]').click()
+            page.locator('#vehicle-rental-discount').fill('100');page.get_by_role('button',name='儲存車輛',exact=True).click()
+            record('租金來源視窗也能改優惠；超額折抵清楚提示且保留草稿，前往處理聚焦優惠，全額折抵為0')
+            discount_saved=state()
+            with page.expect_download() as info:page.get_by_role('button',name='匯出 JSON',exact=True).click()
+            discount_json=artifacts/'rental-discount-backup.json';info.value.save_as(discount_json)
+            assert json.loads(discount_json.read_text())==discount_saved
+            with page.expect_download() as info:page.get_by_role('button',name='匯出試算表',exact=True).click()
+            discount_xlsx=artifacts/'rental-discount-report.xlsx';info.value.save_as(discount_xlsx);report=load_workbook(discount_xlsx)
+            assert report['各車交通費']['B4'].value==800 and report['各車交通費']['D4'].value==1100
+            assert report['各車交通費']['H4'].value==900 and report['各車交通費']['I4'].value==100
+            assert report['各車交通費']['J4'].value=='點數折抵'
+            assert report['整趟車資']['G4'].value==900 and report['整趟車資']['H4'].value==100
+            assert report['整趟總覽']['B3'].value==1860 and report['個人結算']['M4'].value==330
+            page.reload();assert state()==discount_saved
+            bad=json.loads(discount_json.read_text());next(e for e in bad['carExpenses'] if e['category']=='rental')['discount']=100
+            bad_file=artifacts/'bad-discount-format.json';bad_file.write_text(json.dumps(bad,ensure_ascii=False))
+            page.locator('#import-file').set_input_files(str(bad_file));expect(page.locator('#flash')).to_contain_text('租車優惠')
+            assert state()==discount_saved
+            dialog(lambda:page.get_by_role('button',name='重設全部',exact=True).click())
+            dialog(lambda:page.locator('#import-file').set_input_files(str(discount_json)));assert state()==discount_saved
+            tab('vehicles')
+            with page.expect_download() as info:page.get_by_role('button',name='匯出唯讀網頁',exact=True).click()
+            discount_view=artifacts/'rental-discount-view.html';info.value.save_as(discount_view)
+            context.route('**/rental-discount-view.html',lambda r:r.fulfill(path=str(discount_view),content_type='text/html; charset=utf-8'))
+            dr=context.new_page();dr.goto(url.replace('index.html','rental-discount-view.html'));dr.locator('#tab-vehicles').click()
+            dr.locator(f'[data-action="edit-vehicle"][data-vehicle="{discount_vehicle}"]').click()
+            expect(dr.locator('#vehicle-rental-discount')).to_have_value('100');expect(dr.locator('#vehicle-rental-discount')).to_be_disabled()
+            expect(dr.locator('#vehicle-rental-net')).to_have_text('800.0');dr.close()
+            page.set_viewport_size({'width':390,'height':844});assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
+            page.locator(f'[data-action="edit-vehicle"][data-vehicle="{discount_vehicle}"]').click()
+            page.locator('#vehicle-rental-discount').fill('120');expect(page.locator('#vehicle-rental-net')).to_have_text('780.0')
+            page.screenshot(path=str(artifacts/'rental-discount-mobile.png'))
+            page.get_by_role('button',name='取消',exact=True).click();assert state()==discount_saved
+            page.set_viewport_size({'width':1440,'height':1000})
+            record('優惠JSON保存還原及XLSX原價／優惠／實付正確，唯讀不能改；手機可填優惠，取消不寫入')
+
             assert not errors, errors
             assert not external_requests, external_requests
             record('整段操作無 JavaScript 例外，所有外部網路請求被攔截且實際為零')

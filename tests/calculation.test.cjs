@@ -741,3 +741,59 @@ test('家庭合併列的尾差與逐人名單參照一致，逐筆加總永遠�
     assert.equal(Object.values(grouped).reduce((n,v)=>n+v,0),units);
   }
 });
+
+test('租金7000減點數優惠400，以6600分攤及代墊，油錢800不受影響', () => {
+  const s=drivenTrip(3,2),rental=tripCar(s,'7000',[[0,1,2],[0,1,2]],'rental');
+  rental.discount='400';rental.discountNote='點數折抵';tripCar(s,'800',[[0,1,2],[0,1,2]],'fuel');
+  const r=C.calculateTripExpense(s,rental),summary=C.summarize(s);
+  assert.equal(r.grossUnits,70000);assert.equal(r.discountUnits,4000);assert.equal(r.units,66000);
+  assert.equal(json(shares(s,r)),json([0,33000,33000]));assert.equal(summary.total,74000);assert.equal(summary.allocated,74000);
+  assert.equal(summary.people[0].advanced,74000);assert.equal(summary.people[1].total,37000);
+  assert.equal(rental.amount,'7000');assert.equal(rental.discount,'400');assert.equal(s.ledger.length,0);
+});
+
+test('三台不同租金及優惠逐車獨立扣除，總車資與各費用守恆', () => {
+  const s=drivenTrip(4,2);const rents=['7000','6500','5250'],discounts=['400','500',''],fuels=['1200','1200','800'];
+  for(let i=0;i<3;i++){const v={id:C.id('v'),name:'車'+i};s.vehicles.push(v);const r=tripCar(s,rents[i],[[0,1,2,3],[0,1,2,3]],'rental');r.vehicleId=v.id;r.discount=discounts[i];const f=tripCar(s,fuels[i],[[0,1,2,3],[0,1,2,3]],'fuel');f.vehicleId=v.id;}
+  const summary=C.summarize(s);assert.equal(summary.total,210500);assert.equal(summary.allocated,210500);
+  assert.equal(summary.people.reduce((n,p)=>n+p.rental,0),178500);assert.equal(summary.people.reduce((n,p)=>n+p.fuel,0),32000);
+  for(const e of summary.expenses)assert.equal(totalShares(e),e.units);
+});
+
+test('空白與0優惠維持原租金，全額折抵為0、不產生假分攤或代墊', () => {
+  const s=drivenTrip(3,1),e=tripCar(s,'100',[[0,1,2]],'rental');
+  for(const discount of ['','0','0.0']){e.discount=discount;assert.equal(C.calculateTripExpense(s,e).units,1000);}
+  e.discount='100';e.rides=[];e.payerId=null;const r=C.calculateTripExpense(s,e);
+  assert.equal(r.units,0);assert.equal(r.issues.length,0);assert.equal(r.allocated,0);assert.equal(C.summarize(s).total,0);
+});
+
+test('優惠以0.1元整數相減，預設3人各付33.3，兩種算法均守恆', () => {
+  const s=drivenTrip(4,2),e=tripCar(s,'100',[[0,1,2,3],[0,1,2,3]],'rental');e.discount='0.1';
+  for(const method of ['person-days','day-average']){e.method=method;const r=C.calculateTripExpense(s,e);assert.equal(r.units,999);assert.equal(totalShares(r),999);assert.equal(r.days.reduce((n,d)=>n+d.allocated,0),999);assert.equal(json(shares(s,r)),json(method==='person-days'?[0,333,333,333]:[0,334,333,332]));}
+});
+
+test('優惠超過租金或非法金額保留草稿並提示，修正前不計費且不產生負數', () => {
+  for(const discount of ['-1','0.01','101','NaN','Infinity']){
+    const s=drivenTrip(3,1),e=tripCar(s,'100',[[0,1,2]],'rental');e.discount=discount;
+    const r=C.calculateTripExpense(s,e);assert.equal(r.amountValid,false);assert.equal(r.units,0);assert.equal(r.grossUnits,1000);
+    assert.ok(r.issues.some(i=>i.code==='invalid-discount'));assert.equal(totalShares(r),0);assert.equal(C.summarize(s).people[0].advanced,0);
+    const restored=C.decode(C.encode(s));assert.equal(restored.carExpenses[0].amount,'100');assert.equal(restored.carExpenses[0].discount,discount);
+    restored.carExpenses[0].discount='10';assert.equal(C.calculateTripExpense(restored,restored.carExpenses[0]).units,900);
+  }
+});
+
+test('version5租金備份優惠預設0，格式錯誤的優惠或說明拒絕且不覆蓋來源', () => {
+  const s=drivenTrip(3,1),e=tripCar(s,'600',[[0,1,2]],'rental'),old=JSON.parse(C.encode(s));old.version=5;
+  old.carExpenses.forEach(e=>{delete e.discount;delete e.discountNote;});const restored=C.decode(JSON.stringify(old));
+  assert.equal(restored.carExpenses[0].discount,'');assert.equal(restored.carExpenses[0].discountNote,'');assert.equal(C.summarize(restored).total,6000);
+  e.discount='100';e.discountNote='點數折抵 <優惠> =SUM(1,2)';const backup=C.encode(s);assert.equal(C.decode(backup).carExpenses[0].discountNote,e.discountNote);
+  for(const mutate of [s=>{s.carExpenses[0].discount=100;},s=>{s.carExpenses[0].discount=null;},s=>{s.carExpenses[0].discountNote={};},s=>{s.carExpenses[0].discountNote='a'.repeat(161);},s=>{s.carExpenses[0].category='fuel';}]){const bad=JSON.parse(backup);mutate(bad);assert.throws(()=>C.validateState(bad));assert.equal(C.encode(s),backup);}
+});
+
+test('家庭乘車人天使用優惠後車資，家庭代墊仍是實付總額且不倍乘', () => {
+  const s=drivenTrip(3,4);s.members[1].count=4;s.members[2].count=2;
+  const e=tripCar(s,'600',[[0,1,2],[0,1,2],[0,1],[0,1]],'rental');e.discount='100';e.payerId=s.members[1].id;
+  fill(s,0,'dinner','120',[1,2],0);const r=C.summarize(s);
+  assert.equal(r.people[1].transport,4000);assert.equal(r.people[2].transport,1000);
+  assert.equal(r.people[1].advanced,5000);assert.equal(r.people[1].receive,200);assert.equal(r.total,6200);assert.equal(r.allocated,6200);
+});
