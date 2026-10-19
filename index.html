@@ -156,6 +156,7 @@ body{background:white}
     <div class="brand"><div class="brandmark" aria-hidden="true">旅</div><div><div class="eyebrow">一起旅行・一起算清楚</div><h1>旅伴帳本</h1><p class="muted">旅遊費用分攤</p></div></div>
     <div class="top-right"><div class="tools">
       <button type="button" data-action="example">載入範例</button>
+      <button type="button" class="primary" data-action="export-sheet">匯出試算表</button>
       <button type="button" data-action="export">匯出 JSON</button>
       <button type="button" data-action="export-view">匯出唯讀網頁</button>
       <button type="button" data-action="import">匯入備份</button>
@@ -297,6 +298,141 @@ const TripCore = (() => {
   return Object.freeze({VERSION,LIMITS,CATEGORIES,isNamed,isCar,id,expense,day,createTrip,parseAmount,split,calculateExpense,summarize,validateState,encode,decode,example});
 })();
 globalThis.TripCore=TripCore;
+</script>
+
+<script id="trip-export">
+'use strict';
+const TripExport = (() => {
+  const encoder=new TextEncoder();
+  function xml(value) {
+    return String(value).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]/g,'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
+  }
+  const col=n=>{let s='';for(;n;n=Math.floor((n-1)/26))s=String.fromCharCode(65+(n-1)%26)+s;return s;};
+  const cell=(value,style=0)=>({value,style});
+  const textRow=(...values)=>values.map(v=>cell(v));
+  const header=values=>values.map(v=>cell(v,2));
+  const yuan=units=>cell(units/10,1);
+  const stamp=now=>now.toLocaleString('zh-TW',{timeZone:'Asia/Taipei',hour12:false});
+  function namesFor(state,e) {const selected=new Set(e.participantIds);return state.members.filter(m=>TripCore.isNamed(m)&&selected.has(m.id)).map(m=>m.name);}
+  function sheetName(raw,used) {
+    let clean=String(raw).replace(/[\\/\?\*\[\]:\u0000-\u001f]/g,'_').replace(/^'+|'+$/g,'').trim()||'每日明細';
+    const truncate=(s,max)=>{let result='';for(const ch of s){if(result.length+ch.length>max)break;result+=ch;}return result;};
+    const base=truncate(clean,31);let result=base,i=2;
+    while(used.has(result.toLowerCase())){const suffix=' ('+i+')';i+=1;result=truncate(base,31-suffix.length)+suffix;}
+    used.add(result.toLowerCase());return result;
+  }
+  function report(state,now=new Date()) {
+    state=TripCore.validateState(state);
+    const summary=TripCore.summarize(state),named=state.members.filter(TripCore.isNamed),used=new Set(['整趟總覽','每餐參與名單','待處理項目','使用說明'].map(x=>x.toLowerCase()));
+    const columns=[['meals','餐費合計'],['fuel','油錢合計'],['rental','租車費合計'],['other','其他費用合計'],['total','總分攤'],['advanced','已代墊'],['pay','還要付'],['receive','應收回']];
+    const overview={name:'整趟總覽',freezeRows:6,freezeColumns:1,widths:[22,17,17,17,19,17,17,17,17],merges:['A1:I1','B2:I2','A4:I4','A5:I5'],rows:[
+      [cell('旅伴帳本｜整趟總覽',3)],textRow('匯出時間（台北）',stamp(now)),
+      [cell('全部支出'),yuan(summary.total),cell('已分攤總額'),yuan(summary.allocated),cell('差額'),yuan(summary.difference),cell('待處理項目'),cell(summary.issues.length)],
+      [cell(summary.issues.length?'尚有待處理項目，請先完成核對再收付款。':'帳目已核對，所有合法支出均已分攤。',summary.issues.length?7:5)],
+      textRow('其他費用包含停車費；所有金額以元計，精確至 0.1 元。'),header(['姓名',...columns.map(([,label])=>label)]),
+      ...summary.people.map(p=>[cell(p.name),...columns.map(([key])=>yuan(p[key]))]),
+      [cell('合計',2),...columns.map(([key])=>cell(summary.people.reduce((sum,p)=>sum+p[key],0)/10,6))]
+    ]};
+    const meals={name:'每餐參與名單',freezeRows:3,freezeColumns:2,widths:[23,24,16,18,58,20,64],merges:['A1:G1','A2:G2'],rows:[
+      [cell('每餐獨立勾選與分攤',3)],textRow('未勾選者不分攤；當日司機有參與用餐時，餐費照常分攤。'),
+      header(['日期','餐費項目','類別','餐費總額（元）','勾選參與者','實際分攤人數','待處理提醒'])
+    ]};
+    const pending={name:'待處理項目',freezeRows:2,freezeColumns:1,widths:[24,24,78],merges:['A1:C1'],rows:[
+      [cell('待處理項目｜請在原 HTML 帳本修正後重新匯出',3)],header(['日期','費用','提醒'])
+    ]};
+    summary.issues.forEach(i=>pending.rows.push([cell(i.dayName),cell(i.expenseName),cell(i.message,7)]));
+    if(!summary.issues.length)pending.rows.push(textRow('目前沒有待處理項目'));
+    const days=state.days.map((day,index)=>{
+      const results=day.expenses.map(e=>TripCore.calculateExpense(state,day,e));
+      const sum=key=>results.reduce((n,r)=>n+r[key],0);
+      const rows=[
+        [cell(day.name||'未命名日期',3)],textRow('當日用車',day.useCar?'有用車':'未用車'),
+        [cell('當日支出'),yuan(sum('units')),cell('已分攤'),yuan(sum('allocated')),cell('差額'),yuan(sum('units')-sum('allocated'))],
+        textRow('每項費用獨立勾選；未參與者 0 元。司機只免當日油錢與租車費。'),
+      ];
+      const metadata=[['費用名稱',e=>e.name],['類別',e=>TripCore.CATEGORIES[e.category]],['總金額（元）',(e,r)=>r.amountValid?r.units/10:'待修正：'+e.amount],['代墊者',e=>{const payer=state.members.find(m=>m.id===e.payerId);return payer&&TripCore.isNamed(payer)?payer.name:'未指定具名代墊者';}],['實際分攤人數',(e,r)=>r.blocked?0:r.eligible.length],['每人金額（元）',(e,r)=>{if(r.blocked||!r.eligible.length)return '暫不分攤';const shares=r.eligible.map(pid=>r.shares[pid]);const lo=Math.min(...shares)/10,hi=Math.max(...shares)/10;return lo===hi?lo.toFixed(1):lo.toFixed(1)+'–'+hi.toFixed(1);}],['待處理提醒',(e,r)=>r.issues.map(i=>i.message).join('；')]];
+      metadata.forEach(([label,getValue],mi)=>{
+        const row=[cell(label,5),cell('')];
+        day.expenses.forEach((e,ei)=>{const r=results[ei],value=getValue(e,r);row.push(cell(value,mi===2&&r.amountValid?1:mi===6&&r.issues.length?7:mi===0?2:5),cell(''));});rows.push(row);
+      });
+      rows.push(header(['姓名','當日司機',...day.expenses.flatMap(()=>['是否參與','分攤（元）']),'當日總分攤','當日已代墊']));
+      named.forEach(member=>{
+        let total=0,advanced=0;
+        const row=[cell(member.name),cell(day.drivers.includes(member.id)?day.useCar?'是':'紀錄保留（未用車）':'否')];
+        day.expenses.forEach((e,ei)=>{const r=results[ei];total+=r.shares[member.id];if(e.payerId===member.id)advanced+=r.units;row.push(cell(e.participantIds.includes(member.id)?'參與':'未參與'),yuan(r.shares[member.id]));});
+        row.push(yuan(total),yuan(advanced));rows.push(row);
+      });
+      const footer=[cell('已分攤合計',2),cell('')];results.forEach(r=>footer.push(cell(''),cell(r.allocated/10,6)));
+      footer.push(cell(sum('allocated')/10,6),cell(results.reduce((n,r,ei)=>n+(named.some(m=>m.id===day.expenses[ei].payerId)?r.units:0),0)/10,6));rows.push(footer);
+      day.expenses.forEach((e,ei)=>{if(['breakfast','lunch','dinner'].includes(e.category)){const r=results[ei];meals.rows.push([cell(day.name),cell(e.name),cell(TripCore.CATEGORIES[e.category]),r.amountValid?yuan(r.units):cell('待修正：'+e.amount,7),cell(namesFor(state,e).join('、')||'尚未勾選'),cell(r.blocked?0:r.eligible.length),cell(r.issues.map(i=>i.message).join('；'),r.issues.length?7:0)]);}});
+      const end=col(Math.max(6,4+day.expenses.length*2)),merges=[`A1:${end}1`,`A4:${end}4`];
+      for(let r=5;r<=11;r++){merges.push(`A${r}:B${r}`);day.expenses.forEach((e,i)=>merges.push(`${col(3+2*i)}${r}:${col(4+2*i)}${r}`));}
+      const label=day.name.trim()===('第 '+(index+1)+' 天')?day.name:'第 '+(index+1)+' 天｜'+(day.name||'每日明細');
+      return {name:sheetName(label,used),freezeRows:12,freezeColumns:2,widths:[22,23,...day.expenses.flatMap(()=>[23,18]),20,20],merges,rows};
+    });
+    const instructions={name:'使用說明',widths:[26,105],merges:['A1:B1'],rows:[
+      [cell('HTML 記帳 → 試算表分享',3)],textRow('報表更新時間（台北）',stamp(now)),
+      textRow('資料來源','所有分攤已在原 HTML 帳本計算完成。本報表保存本次結果，不含需要啟用的程式或公式。'),
+      textRow('餐費','每天的早餐、午餐、晚餐，以及同類的多筆餐費，各自勾選參與者。沒吃不勾，不分攤該筆。'),
+      textRow('每日司機','每日獨立設定。司機有勾選餐費、停車費及其他費用時，照常分攤；只免當日油錢及租車費。'),
+      textRow('尾差','所有費用以 0.1 元整數計算，尾差依名單固定順序分配。'),
+      textRow('輸出內容','整趟總覽、每餐參與名單、每一天的明細，以及待處理項目。空白姓名不列入報表成員。'),
+      textRow('Google 試算表','將 .xlsx 匯入 Google 試算表並分享給旅伴作檢視者。匯入後可直接看，不需貼程式或啟用核取方塊。'),
+      textRow('後續修改','在原 HTML 修改，再重新匯出。於既有 Google 試算表使用「檔案 → 匯入 → 取代試算表」更新，沿用同一分享網址。'),
+      textRow('資料備份','本報表是分享用快照，不能還原完整帳本；請另外在 HTML 匯出 JSON 備份。'),
+      textRow('提醒','報表內的「參與／未參與」是記錄結果；實際勾選請回到 HTML。尚有待處理項目時請先修正再結算。')
+    ]};
+    return [overview,meals,...days,pending,instructions];
+  }
+  const crcTable=Uint32Array.from({length:256},(_,i)=>{let c=i;for(let b=0;b<8;b++)c=(c&1)?0xedb88320^(c>>>1):c>>>1;return c>>>0;});
+  function crc32(data){let crc=0xffffffff;for(const byte of data)crc=crcTable[(crc^byte)&255]^(crc>>>8);return (crc^0xffffffff)>>>0;}
+  function concat(arrays){const size=arrays.reduce((n,a)=>n+a.length,0);if(size>0xffffffff)throw Error('匯出檔案過大');const result=new Uint8Array(size);let p=0;for(const a of arrays){result.set(a,p);p+=a.length;}return result;}
+  function zip(files){
+    const local=[],central=[];let offset=0;
+    for(const [path,content] of files){
+      const name=encoder.encode(path),data=encoder.encode(content),crc=crc32(data),entry=new Uint8Array(30+name.length),v=new DataView(entry.buffer);
+      v.setUint32(0,0x04034b50,true);v.setUint16(4,20,true);v.setUint16(6,0x800,true);v.setUint16(12,0x21,true);v.setUint32(14,crc,true);v.setUint32(18,data.length,true);v.setUint32(22,data.length,true);v.setUint16(26,name.length,true);entry.set(name,30);local.push(entry,data);
+      const record=new Uint8Array(46+name.length),c=new DataView(record.buffer);
+      c.setUint32(0,0x02014b50,true);c.setUint16(4,20,true);c.setUint16(6,20,true);c.setUint16(8,0x800,true);c.setUint16(14,0x21,true);c.setUint32(16,crc,true);c.setUint32(20,data.length,true);c.setUint32(24,data.length,true);c.setUint16(28,name.length,true);c.setUint32(42,offset,true);record.set(name,46);central.push(record);offset+=entry.length+data.length;
+    }
+    const directory=concat(central),end=new Uint8Array(22),e=new DataView(end.buffer);e.setUint32(0,0x06054b50,true);e.setUint16(8,files.length,true);e.setUint16(10,files.length,true);e.setUint32(12,directory.length,true);e.setUint32(16,offset,true);
+    return concat([...local,directory,end]);
+  }
+  const declaration='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+  const ns='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+  function worksheet(s){
+    const maxCols=Math.max(1,...s.rows.map(row=>row.length));
+    const x=s.freezeColumns||0,y=s.freezeRows||0,corner=col(x+1)+(y+1),pane=x&&y?'bottomRight':y?'bottomLeft':'topRight';
+    const freeze=x||y?`<pane xSplit="${x}" ySplit="${y}" topLeftCell="${corner}" activePane="${pane}" state="frozen"/><selection pane="${pane}" activeCell="${corner}" sqref="${corner}"/>`:'';
+    const cols=(s.widths||[]).map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join('');
+    function height(row,ri){
+      if(ri===0)return 34;let lines=1;
+      row.forEach((c,ci)=>{if(!c||typeof c.value!=='string')return;let width=(s.widths||[])[ci]||18;
+        const merge=(s.merges||[]).find(range=>range.split(':')[0]===col(ci+1)+(ri+1));
+        if(merge){const end=merge.split(':')[1].match(/^[A-Z]+/)[0],number=[...end].reduce((n,ch)=>n*26+ch.charCodeAt(0)-64,0);width=0;for(let k=ci;k<number;k++)width+=(s.widths||[])[k]||18;}
+        const chars=[...c.value].reduce((n,ch)=>n+(ch.charCodeAt(0)>255?2:1),0);lines=Math.max(lines,Math.ceil(chars/Math.max(1,width-2)));});
+      return Math.min(409,Math.max(27,lines*15+8));
+    }
+    const rows=s.rows.map((row,ri)=>`<row r="${ri+1}" ht="${height(row,ri)}" customHeight="1">${row.map((c,ci)=>{
+      if(c===null||c===undefined)return '';const v=c.value,ref=col(ci+1)+(ri+1),style=c.style||0;
+      if(typeof v==='number'){if(!Number.isFinite(v))throw Error('數值不合法，請先檢查帳本');return `<c r="${ref}" s="${style}"><v>${v}</v></c>`;}
+      return `<c r="${ref}" s="${style}" t="inlineStr"><is><t xml:space="preserve">${xml(v??'')}</t></is></c>`;
+    }).join('')}</row>`).join('');
+    const merges=s.merges?.length?`<mergeCells count="${s.merges.length}">${s.merges.map(ref=>`<mergeCell ref="${ref}"/>`).join('')}</mergeCells>`:'';
+    return declaration+`<worksheet xmlns="${ns}"><dimension ref="A1:${col(maxCols)}${s.rows.length}"/><sheetViews><sheetView workbookViewId="0" showGridLines="0">${freeze}</sheetView></sheetViews><sheetFormatPr defaultRowHeight="27"/><cols>${cols}</cols><sheetData>${rows}</sheetData>${merges}<pageMargins left="0.3" right="0.3" top="0.5" bottom="0.5" header="0.2" footer="0.2"/></worksheet>`;
+  }
+  function xlsx(state,now=new Date()){
+    const sheets=report(state,now),files=[];
+    files.push(['[Content_Types].xml',declaration+`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((s,i)=>`<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}</Types>`]);
+    files.push(['_rels/.rels',declaration+'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>']);
+    files.push(['xl/workbook.xml',declaration+`<workbook xmlns="${ns}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView/></bookViews><sheets>${sheets.map((s,i)=>`<sheet name="${xml(s.name)}" sheetId="${i+1}" r:id="rId${i+1}"/>`).join('')}</sheets><calcPr calcId="0" fullCalcOnLoad="0"/></workbook>`]);
+    files.push(['xl/_rels/workbook.xml.rels',declaration+`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((s,i)=>`<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join('')}<Relationship Id="rId${sheets.length+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`]);
+    files.push(['xl/styles.xml',declaration+`<styleSheet xmlns="${ns}"><numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0.0"/></numFmts><fonts count="4"><font><sz val="11"/><name val="Noto Sans CJK TC"/><color rgb="FF233D37"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Noto Sans CJK TC"/></font><font><b/><sz val="20"/><name val="Noto Sans CJK TC"/></font><font><sz val="11"/><color rgb="FFA82F33"/><name val="Noto Sans CJK TC"/></font></fonts><fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF176253"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEDF4ED"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="8"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="0" fillId="3" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="164" fontId="0" fillId="3" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`]);
+    sheets.forEach((s,i)=>files.push([`xl/worksheets/sheet${i+1}.xml`,worksheet(s)]));return zip(files);
+  }
+  return Object.freeze({report,xlsx});
+})();
+globalThis.TripExport=TripExport;
 </script>
 
 <script id="trip-app">
@@ -459,6 +595,13 @@ globalThis.TripCore=TripCore;
     if(action==='open-roster'){$('roster').open=true;$('roster').scrollIntoView({block:'start'});$('name-'+state.members[0].id)?.focus();return;}
     if(action==='goto-expense'){selectTab(button.dataset.tab);$('amount-'+eid)?.focus();return;}
     if(action==='import'){$('import-file').click();return;}
+    if(action==='export-sheet'){
+      try{
+        const data=TripExport.xlsx(state),blob=new Blob([data],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),url=URL.createObjectURL(blob),a=document.createElement('a');
+        a.href=url;a.download='旅伴帳本報表-'+new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Taipei'}).format(new Date())+'.xlsx';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+        notify('已匯出試算表：包含整趟總覽、每餐參與名單與每日明細。匯入 Google 試算表即可分享檢視；修改後需重新匯出更新。');
+      }catch(err){notify('試算表匯出失敗，帳本資料仍保留：'+err.message);}return;
+    }
     if(action==='export'){
       const blob=new Blob([C.encode(state)],{type:'application/json;charset=utf-8'}), url=URL.createObjectURL(blob), a=document.createElement('a');
       a.href=url;a.download='旅伴帳本-'+new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Taipei'}).format(new Date())+'.json';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);notify('已匯出 JSON 備份，包含所有成員、日期、司機、費用與參與紀錄。');return;

@@ -13,6 +13,7 @@ import tempfile
 import threading
 
 from playwright.sync_api import sync_playwright, expect
+from openpyxl import load_workbook
 
 ROOT = Path(__file__).resolve().parents[1]
 STORE = 'travel-split-v1'
@@ -137,6 +138,25 @@ def main():
             expect(page.locator(f'[data-summary="{a}-meals"]')).to_have_text('68.4')
             expect(page.locator('#total-difference')).to_have_text('0.0元')
             record('三餐勾選互相獨立，總覽立即反映餐費與代墊')
+
+            with page.expect_download() as info:
+                page.get_by_role('button',name='匯出試算表',exact=True).click()
+            report_file=artifacts/'meal-report.xlsx'
+            info.value.save_as(report_file)
+            report=load_workbook(report_file,data_only=False)
+            assert report['整趟總覽']['B3'].value==260
+            assert report['整趟總覽']['A7'].value=='阿安'
+            assert report['整趟總覽']['B7'].value==68.4
+            assert report['整趟總覽']['I7'].value==31.6
+            assert report['每餐參與名單']['E4'].value=='阿安、小晴、阿哲'
+            assert report['每餐參與名單']['E5'].value=='小晴、阿哲'
+            assert report['每餐參與名單']['E6'].value=='阿安、阿哲'
+            daily_report=report['第 1 天']
+            assert daily_report['C13'].value=='參與' and daily_report['D13'].value==33.4
+            assert daily_report['E13'].value=='未參與' and daily_report['F13'].value==0
+            assert daily_report['G13'].value=='參與' and daily_report['H13'].value==35
+            assert not any(c.data_type=='f' for sh in report for row in sh for c in row)
+            record('實際匯出 XLSX：三餐參與名單、沒吃零元、尾差及總覽正確，報表不需程式或公式')
 
             tab(d1['id'])
             page.locator('[data-field="use-car"]').check()
