@@ -50,6 +50,9 @@ s=base(2,2);s.members[0].count=4;s.members[1].count=2;s.days.forEach((d,i)=>{d.u
 s=base(3,2);s.days.forEach(d=>{d.useCar=true;d.drivers=[s.members[0].id];});const discountedVehicle={id:C.id('v'),name:'優惠租車'};s.vehicles.push(discountedVehicle);const discountedRent=pool(s,'7000',[[0,1,2],[0,1,2]],'rental');Object.assign(discountedRent,{vehicleId:discountedVehicle.id,discount:'400',discountNote:'點數 <折抵> =SUM(1,2)'});const discountedFuel=pool(s,'800',[[0,1,2],[0,1,2]],'fuel');discountedFuel.vehicleId=discountedVehicle.id;discountedFuel.payerId=s.members[1].id;add('rental_discount_vehicle_net_cost',s);
 s=base(3,1);const freeRent=pool(s,'100',[],'rental');freeRent.discount='100';add('rental_discount_full_waiver',s);
 s=base(3,1);s.days[0].useCar=true;s.days[0].drivers=[s.members[0].id];const invalidRent=pool(s,'100',[[0,1,2]],'rental');invalidRent.discount='101';invalidRent.discountNote='待核對';add('rental_discount_invalid_pending',s);
+s=base(3,1);s.days[0].useCar=true;s.days[0].drivers=[s.members[0].id];const half=pool(s,'300',[[0,1,2]]);half.rides[0].halfDayIds=[s.members[2].id];s.transportRides=JSON.parse(JSON.stringify(half.rides));add('half_day_full_and_half',s);
+s=base(3,2);s.members[1].count=4;s.members[2].count=2;s.days.forEach(d=>{d.useCar=true;d.drivers=[s.members[0].id];});s.days[1].drivers.push(s.members[1].id);const halfFamily=pool(s,'750',[[0,1,2],[0,1,2]],'rental');halfFamily.discount='100';halfFamily.rides[0].halfDayIds=[s.members[1].id];halfFamily.rides[1].halfDayIds=[s.members[1].id,s.members[2].id];add('half_day_family_driver_discount',s);
+s=base(3,2);s.days.forEach(d=>{d.useCar=true;d.drivers=[s.members[0].id];});const halfAverage=pool(s,'100',[[0,1,2],[0,1,2]],'fuel','day-average');halfAverage.rides[0].halfDayIds=[s.members[2].id];halfAverage.rides[1].halfDayIds=[s.members[1].id];add('half_day_daily_average',s);
 fs.writeFileSync(output+'/fixtures.json',JSON.stringify(fixtures));
 '''
 
@@ -180,6 +183,8 @@ def main():
                     assert row[12]==m['count']
                     assert row[13]==result['billablePersonDays'][m['id']]
                     assert row[14]==day['billableCounts'][m['id']]
+                    assert row[15]==day['rideHalfDays'][m['id']]/2
+                    assert row[16]==day['personHalfDays'][m['id']]
                     member_sums[m['id']]+=units(row[7]);cursor+=1
             assert sum(member_sums.values())==result['allocated']
         assert daily_pool.max_row==max(3,cursor-1)
@@ -191,6 +196,13 @@ def main():
             assert units(fleet.cell(vi,2).value)==rent
             assert units(fleet.cell(vi,3).value)==gas
             assert units(fleet.cell(vi,4).value)==rent+gas
+        if f['name']=='half_day_full_and_half':
+            assert daily_pool['P5'].value==1 and daily_pool['P6'].value==0.5
+            assert daily_pool['Q5'].value==2 and daily_pool['Q6'].value==1
+            assert ov['C8'].value==200 and ov['C9'].value==100
+        if f['name']=='half_day_family_driver_discount':
+            assert ov['D8'].value==350 and ov['D9'].value==300
+            assert daily_pool['N5'].value==3.5 and daily_pool['N6'].value==3
         if f['name']=='rental_discount_vehicle_net_cost':
             assert fleet['B4'].value==6600 and fleet['C4'].value==800 and fleet['D4'].value==7400
             assert fleet['H4'].value==7000 and fleet['I4'].value==400

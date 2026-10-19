@@ -1233,6 +1233,87 @@ def main():
             page.set_viewport_size({'width':1440,'height':1000})
             record('優惠JSON保存還原及XLSX原價／優惠／實付正確，唯讀不能改；手機可填優惠，取消不寫入')
 
+            # Actual per-person/day full/half selectors; shared across every vehicle receipt.
+            half_day=family_days[-1]
+            def duration(did,pid):
+                return page.locator(f'#expense-dialog [data-field="trip-duration"][data-day="{did}"][data-person="{pid}"]')
+            def open_plan():
+                tab('vehicles');page.get_by_role('button',name='設定整趟搭車名單',exact=True).click()
+            open_plan()
+            expect(duration(half_day,fa)).to_have_value('2');expect(duration(half_day,fb)).to_be_disabled()
+            duration(half_day,fa).select_option('1')
+            expect(page.locator(f'[data-trip-billable="{fa}"]')).to_have_text('14')
+            expect(page.locator(f'[data-trip-billable="{fb}"]')).to_have_text('4')
+            expect(page.locator(f'[data-trip-total="{fa}"]')).to_have_text('855.7')
+            assert state()==discount_saved
+            ride(half_day,fa).uncheck();expect(duration(half_day,fa)).to_be_disabled()
+            expect(duration(half_day,fa)).to_have_value('1');ride(half_day,fa).check()
+            date_choice=page.locator(f'[data-field="trip-day"][data-day="{half_day}"]')
+            date_choice.uncheck();date_choice.check();expect(duration(half_day,fa)).to_have_value('1')
+            page.get_by_role('button',name='取消',exact=True).click();assert state()==discount_saved
+            open_plan();duration(half_day,fa).select_option('1')
+            page.screenshot(path=str(artifacts/'half-day-desktop.png'))
+            page.get_by_role('button',name='儲存搭車名單',exact=True).click()
+            half_saved=state()
+            assert half_saved['transportRides'][-1]['halfDayIds']==[fa]
+            assert all(e['rides'][-1]['halfDayIds']==[fa] for e in half_saved['carExpenses'])
+            tab('personal');page.locator('#personal-person').select_option(fa)
+            expect(page.locator('[data-personal-source="transport"]')).to_have_text('855.7')
+            expect(page.locator('[data-personal="advanced"]')).to_have_text('1,560.0 元')
+            expect(page.locator('[data-personal="receive"]')).to_have_text('354.3 元')
+            expect(page.locator('[data-personal-source="meals"]')).to_have_text('400.0')
+            record('逐人逐日全天／半天可操作，4人半天算2人天；取消不寫入，切換參與及日期保留時長，儲存同步各車租金油錢')
+            set_driver(half_day,fa,True);open_plan()
+            expect(page.locator(f'[data-trip-billable="{fa}"]')).to_have_text('13.5')
+            expect(page.locator(f'[data-trip-billable="{fc}"]')).to_have_text('0')
+            expect(page.locator(f'[data-trip-total="{fa}"]')).to_have_text('848.7')
+            page.get_by_role('button',name='取消',exact=True).click();set_driver(half_day,fa,False)
+            assert state()==half_saved
+            record('家庭半天司機僅免本人半人天，家人仍計費；多位司機及司機輪替立即重算，優惠與代墊不倍乘')
+            with page.expect_download() as info:page.get_by_role('button',name='匯出 JSON',exact=True).click()
+            half_json=artifacts/'half-day-backup.json';info.value.save_as(half_json)
+            assert json.loads(half_json.read_text())==half_saved
+            with page.expect_download() as info:page.get_by_role('button',name='匯出試算表',exact=True).click()
+            half_xlsx=artifacts/'half-day-report.xlsx';info.value.save_as(half_xlsx);report=load_workbook(half_xlsx)
+            rows=[row for row in report['車資逐日核對'].iter_rows(min_row=4,values_only=True) if row[4]=='甲家庭改名']
+            assert sum(row[15]==0.5 for row in rows)==2
+            assert all(row[13]==14 for row in rows)
+            assert all(row[16]==4 for row in rows if row[15]==0.5)
+            assert report['個人結算']['M4'].value==354.3
+            page.reload();assert state()==half_saved
+            bad=json.loads(half_json.read_text());bad['transportRides'][-1]['halfDayIds']=['unknown']
+            bad_file=artifacts/'bad-half-day.json';bad_file.write_text(json.dumps(bad,ensure_ascii=False))
+            page.locator('#import-file').set_input_files(str(bad_file));expect(page.locator('#flash')).to_contain_text('參照錯誤')
+            assert state()==half_saved
+            dialog(lambda:page.get_by_role('button',name='重設全部',exact=True).click())
+            dialog(lambda:page.locator('#import-file').set_input_files(str(half_json)));assert state()==half_saved
+            roster();delete_half_person=page.locator(f'[data-action="delete-member"][data-person="{fa}"]')
+            dialog(lambda:delete_half_person.click(),False);assert state()==half_saved
+            dialog(lambda:delete_half_person.click())
+            assert all(fa not in ride.get('halfDayIds',[]) for ride in state()['transportRides'])
+            assert all(fa not in ride.get('halfDayIds',[]) for e in state()['carExpenses'] for ride in e['rides'])
+            with page.expect_download() as info:page.get_by_role('button',name='匯出 JSON',exact=True).click()
+            info.value.save_as(artifacts/'half-day-after-delete.json')
+            dialog(lambda:page.locator('#import-file').set_input_files(str(half_json)));assert state()==half_saved
+            roster(False)
+            record('半天JSON實際下載還原及重新整理一致，無效參照不覆蓋；刪人確認並清除時長關聯，XLSX人天與結算正確')
+            tab('vehicles')
+            with page.expect_download() as info:page.get_by_role('button',name='匯出唯讀網頁',exact=True).click()
+            half_view=artifacts/'half-day-view.html';info.value.save_as(half_view)
+            context.route('**/half-day-view.html',lambda r:r.fulfill(path=str(half_view),content_type='text/html; charset=utf-8'))
+            hr=context.new_page();hr.goto(url.replace('index.html','half-day-view.html'));hr.locator('#tab-vehicles').click()
+            hr.get_by_role('button',name='查看整趟搭車名單',exact=True).click()
+            hs=hr.locator(f'[data-field="trip-duration"][data-day="{half_day}"][data-person="{fa}"]')
+            expect(hs).to_have_value('1');expect(hs).to_be_disabled();hr.close()
+            page.set_viewport_size({'width':390,'height':844});open_plan()
+            duration(half_day,fa).select_option('2');expect(page.locator(f'[data-trip-billable="{fa}"]')).to_have_text('16')
+            duration(half_day,fa).select_option('1');expect(page.locator(f'[data-trip-billable="{fa}"]')).to_have_text('14')
+            assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
+            page.screenshot(path=str(artifacts/'half-day-mobile.png'))
+            page.get_by_role('button',name='儲存搭車名單',exact=True).click();page.reload();assert state()==half_saved
+            page.set_viewport_size({'width':1440,'height':1000})
+            record('唯讀網頁保留半天且不能修改；390px手機可選全天／半天、儲存及刷新，沒有整頁水平溢出')
+
             assert not errors, errors
             assert not external_requests, external_requests
             record('整段操作無 JavaScript 例外，所有外部網路請求被攔截且實際為零')
