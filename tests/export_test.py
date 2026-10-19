@@ -31,6 +31,10 @@ s=C.createTrip();s.members[0].name='A';s.members[29].name='第30位';fee(s,0,'di
 s=C.example();s.members[0].name='改名後';add('rename_preserves_totals',s);
 s=base();s.members[0].name='=SUM(1,2)';s.members[1].name='小晴 & <同行者>';s.days[0].name='東京/京都:*?[]\\';s.days[1].name=s.days[0].name;s.days[0].expenses[0].name='"早餐" & 點心';fee(s,0,'breakfast','100',[0,1,2]);add('safe_text_and_sheet_names',s);
 s=base();fee(s,0,'breakfast','100',[0,1]);const e=C.expense('breakfast');Object.assign(e,{name:'加點早餐',amount:'30',participantIds:[s.members[1].id],payerId:s.members[1].id});s.days[0].expenses.push(e);add('duplicate_meals_independent',s);
+const entry=(s,pi,type,amount,payer=null,direction=type==='payment'?'minus':'plus')=>{const e=C.ledgerEntry(s.members[pi].id);Object.assign(e,{type,amount,direction,description:'用途 & <備註>',payerId:payer===null?null:s.members[payer].id});s.ledger.push(e);return e;};
+s=base();fee(s,0,'dinner','6740',[0],1);entry(s,0,'payment','10000');entry(s,0,'refund','3260');entry(s,0,'charge','350',1);entry(s,1,'adjustment','4000');entry(s,1,'adjustment','6',null,'minus');add('personal_signed_settlement',s);
+s=base();entry(s,0,'charge','100');entry(s,0,'adjustment','-1');entry(s,0,'payment','200');s.members[0].name='';add('personal_blank_names_and_invalid',s);
+s=base();fee(s,0,'other','6280',[0],1);entry(s,0,'adjustment','4000');s.members[0].name='=HYPERLINK(1)';add('personal_literal_purpose_and_name',s);
 fs.writeFileSync(output+'/fixtures.json',JSON.stringify(fixtures));
 '''
 
@@ -74,7 +78,7 @@ def main():
         named=[m for m in s['members'] if m['name'].strip()]
         for i,p in enumerate(summary['people']):
             assert ov.cell(7+i,1).value==p['name']
-            for ci,key in enumerate(['meals','fuel','rental','other','total','advanced','pay','receive'],2):
+            for ci,key in enumerate(['meals','fuel','rental','other','personal','adjustment','total','advanced','paid','refunded','pay','receive'],2):
                 assert units(ov.cell(7+i,ci).value)==p[key],(f['name'],p['id'],key)
         for di,day in enumerate(s['days']):
             sh=wb.worksheets[2+di]
@@ -96,6 +100,20 @@ def main():
         for row,(day,e) in zip(meal_rows,expected_meals):
             expected='、'.join(m['name'] for m in named if m['id'] in e['participantIds']) or '尚未勾選'
             assert row[0]==day['name'] and row[1]==e['name'] and row[4]==expected
+        personal=wb['個人紀錄']
+        assert personal.max_row==3+len(s['ledger'])
+        for i,e in enumerate(s['ledger'],4):
+            r=next(r for r in summary['ledgerResults'] if r['id']==e['id'])
+            assert personal.cell(i,3).value==e['description']
+            assert personal.cell(i,4).value==('－ 扣抵' if e['direction']=='minus' else '＋ 加收')
+            if r['amountValid']:
+                assert units(personal.cell(i,5).value)==r['units']
+                assert units(personal.cell(i,7).value)==r['units']*(-1 if e['direction']=='minus' else 1)
+        advance=wb['代墊明細']
+        assert advance.max_row==3+len(summary['advances'])
+        for i,a in enumerate(summary['advances'],4):
+            assert advance.cell(i,2).value==a['label']
+            assert units(advance.cell(i,3).value)==a['units']
         if f['name']=='safe_text_and_sheet_names':
             assert ov['A7'].value=='=SUM(1,2)' and ov['A7'].data_type=='s'
         print('PASS:',f['name'],flush=True)

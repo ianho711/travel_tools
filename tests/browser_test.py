@@ -61,7 +61,7 @@ def main():
             context.route('**/*', route_request)
             page.goto(url)
             expect(page).to_have_title('旅伴帳本｜旅遊費用分攤')
-            expect(page.get_by_role('tab')).to_have_count(11)
+            expect(page.get_by_role('tab')).to_have_count(12)
             expect(page.locator('#total-expense')).to_have_text('0.0元')
             expect(page.locator('#roster-summary')).to_contain_text('0 位已填姓名 / 30 個名額')
             record('初始 30 人／10 天，無假支出，頁面無外部依賴')
@@ -147,7 +147,7 @@ def main():
             assert report['整趟總覽']['B3'].value==260
             assert report['整趟總覽']['A7'].value=='阿安'
             assert report['整趟總覽']['B7'].value==68.4
-            assert report['整趟總覽']['I7'].value==31.6
+            assert report['整趟總覽']['M7'].value==31.6
             assert report['每餐參與名單']['E4'].value=='阿安、小晴、阿哲'
             assert report['每餐參與名單']['E5'].value=='小晴、阿哲'
             assert report['每餐參與名單']['E6'].value=='阿安、阿哲'
@@ -393,6 +393,146 @@ def main():
             expect(page.locator('#total-expense')).to_have_text('0.0元')
             assert len(state()['members']) == 30 and len(state()['days']) == 10
             record('載入範例有有效帳目且無待處理，重設確實恢復空白 30 人／10 天')
+
+            # New personal ledger: exercise real purpose, +/- controls and settlement transfers.
+            roster()
+            for i, name in enumerate(['甲旅伴', '乙旅伴', '丙旅伴']):
+                page.locator('[data-field="member-name"]').nth(i).fill(name)
+            roster(False)
+            fresh = state()
+            pa, pb, pc = [m['id'] for m in fresh['members'][:3]]
+            first_day = fresh['days'][0]
+            bill = first_day['expenses'][0]['id']
+            tab(first_day['id'])
+            set_fee(bill, '6740', [pa], pb)
+            tab('personal')
+            page.locator('#personal-person').select_option(pa)
+
+            def add_entry(kind, description, amount, direction='plus', payer=None):
+                page.get_by_role('button', name='＋ 新增個人紀錄', exact=True).click()
+                entry_id = state()['ledger'][-1]['id']
+                page.locator('#ledger-type-' + entry_id).select_option(kind)
+                page.locator('#ledger-description-' + entry_id).fill(description)
+                if kind == 'adjustment':
+                    page.locator('#ledger-direction-' + entry_id).select_option(direction)
+                page.locator('#ledger-amount-' + entry_id).fill(amount)
+                if payer:
+                    page.locator('#ledger-payer-' + entry_id).select_option(payer)
+                return entry_id
+
+            extra = add_entry('adjustment', '額外車資', '4000')
+            expect(page.locator('[data-personal="pay"]')).to_have_text('10,740.0 元')
+            page.locator('#ledger-direction-' + extra).select_option('minus')
+            expect(page.locator('[data-personal="pay"]')).to_have_text('2,740.0 元')
+            expect(page.locator('[data-personal="paid"]')).to_have_text('0.0 元')
+            page.locator('#ledger-direction-' + extra).select_option('plus')
+            page.locator('#ledger-amount-' + extra).fill('3540')
+            expect(page.locator('[data-personal="pay"]')).to_have_text('10,280.0 元')
+            dialog(lambda: page.locator(f'[data-action="delete-ledger"][data-ledger="{extra}"]').click(), False)
+            assert len(state()['ledger']) == 1
+            dialog(lambda: page.locator(f'[data-action="delete-ledger"][data-ledger="{extra}"]').click())
+            expect(page.locator('[data-personal="pay"]')).to_have_text('6,740.0 元')
+            record('個人用途、金額與正負可實際編輯，多筆紀錄與刪除確認正常，加減收不當作繳款')
+
+            payment = add_entry('payment', '出發前先收', '10000')
+            expect(page.locator('#ledger-direction-' + payment)).to_be_disabled()
+            expect(page.locator('#ledger-direction-' + payment)).to_have_value('minus')
+            expect(page.locator('[data-personal="receive"]')).to_have_text('3,260.0 元')
+            refund = add_entry('refund', '已退回差額', '3260')
+            expect(page.locator('[data-personal="receive"]')).to_have_text('0.0 元')
+            expect(page.locator('[data-personal="pay"]')).to_have_text('0.0 元')
+            tab('overview')
+            expect(page.locator('#total-expense')).to_have_text('6,740.0元')
+            expect(page.locator('#collected-total')).to_contain_text('6,740.0 元')
+            tab('personal')
+            charge = add_entry('charge', '個人加購', '350', payer=pb)
+            expect(page.locator('[data-personal="pay"]')).to_have_text('350.0 元')
+            page.locator('#personal-person').select_option(pb)
+            expect(page.locator('[data-personal="advanced"]')).to_have_text('7,090.0 元')
+            expect(page.locator('.advance-list')).to_contain_text('350.0 元')
+            # A payer may be viewing an advance for someone else's purchase: follow the owner.
+            page.locator(f'.advance-list [data-ledger="{charge}"]').click()
+            expect(page.locator('#personal-person')).to_have_value(pa)
+            expect(page.locator('#ledger-amount-' + charge)).to_be_focused()
+            record('先收款、應退差額、實際退款與個人加購分開計算；代墊自動彙總且來源可點選')
+
+            bad = add_entry('adjustment', '待核對', '-1')
+            expect(page.locator('#ledger-amount-' + bad)).to_have_attribute('aria-invalid', 'true')
+            tab('overview')
+            expect(page.locator('#pending-issues')).to_contain_text('待核對')
+            page.locator(f'[data-action="goto-expense"][data-ledger="{bad}"]').click()
+            expect(page.locator('#ledger-amount-' + bad)).to_be_focused()
+            page.locator('#ledger-amount-' + bad).fill('0')
+            roster()
+            page.locator('[data-field="member-name"]').first.fill('改名甲')
+            roster(False)
+            expect(page.locator('#personal-person')).to_have_value(pa)
+            expect(page.locator('[data-personal="pay"]')).to_have_text('350.0 元')
+            saved_personal = state()
+            page.reload()
+            expect(page.locator('#tab-personal')).to_have_attribute('aria-selected', 'true')
+            page.locator('#personal-person').select_option(pa)
+            assert state() == saved_personal
+            expect(page.locator('[data-personal="pay"]')).to_have_text('350.0 元')
+            record('個人非法金額有提示與修正入口；改名與重新整理不遺失紀錄')
+
+            # Backup / export includes every personal row and source advance.
+            with page.expect_download() as info:
+                page.get_by_role('button', name='匯出 JSON', exact=True).click()
+            personal_backup = artifacts / 'personal-backup.json'
+            info.value.save_as(personal_backup)
+            assert json.loads(personal_backup.read_text()) == saved_personal
+            with page.expect_download() as info:
+                page.get_by_role('button', name='匯出試算表', exact=True).click()
+            personal_xlsx = artifacts / 'personal-report.xlsx'
+            info.value.save_as(personal_xlsx)
+            exported = load_workbook(personal_xlsx)
+            assert exported['個人紀錄']['A4'].value == '改名甲'
+            assert exported['個人紀錄']['G4'].value == -10000
+            assert exported['個人紀錄']['G5'].value == 3260
+            assert exported['整趟總覽']['J7'].value == 10000
+            assert exported['整趟總覽']['K7'].value == 3260
+            assert exported['整趟總覽']['L7'].value == 350
+            assert exported['代墊明細']['C4'].value == 6740
+            dialog(lambda: page.get_by_role('button', name='重設全部', exact=True).click())
+            dialog(lambda: page.locator('#import-file').set_input_files(str(personal_backup)))
+            assert state() == saved_personal
+            record('實際匯出及還原含個人紀錄的 JSON；XLSX 含正負、收退款、總覽與代墊來源')
+
+            tab('personal')
+            page.locator('#personal-person').select_option(pa)
+            with page.expect_download() as info:
+                page.get_by_role('button', name='匯出唯讀網頁', exact=True).click()
+            personal_view = artifacts / 'personal-view.html'
+            info.value.save_as(personal_view)
+            context.route('**/personal-view.html', lambda r: r.fulfill(path=str(personal_view), content_type='text/html; charset=utf-8'))
+            viewer = context.new_page()
+            viewer.goto(url.replace('index.html', 'personal-view.html'))
+            viewer.locator('#tab-personal').click()
+            expect(viewer.locator('#personal-person')).to_be_enabled()
+            viewer.locator('#personal-person').select_option(pb)
+            expect(viewer.locator('[data-personal="advanced"]')).to_have_text('7,090.0 元')
+            assert viewer.locator('#view input:not(:disabled),#view select:not(:disabled):not(#personal-person)').count() == 0
+            expect(viewer.locator('[data-action="add-ledger"]')).to_be_hidden()
+            viewer.close()
+            assert state() == saved_personal
+            page.set_viewport_size({'width': 390, 'height': 844})
+            assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
+            page.screenshot(path=str(artifacts / 'mobile-personal.png'), full_page=True)
+            page.set_viewport_size({'width': 1440, 'height': 1000})
+            page.screenshot(path=str(artifacts / 'desktop-personal.png'), full_page=True)
+            record('唯讀快照可切換查看不同成員但不能修改，個人明細在手機寬度無整頁溢出')
+
+            # Deletion must clean up both ownership and other people's payer references.
+            roster()
+            dialog(lambda: page.locator('[data-action="delete-member"]').nth(1).click(), False)
+            assert state() == saved_personal
+            dialog(lambda: page.locator('[data-action="delete-member"]').nth(1).click())
+            assert all(e['payerId'] != pb and e['personId'] != pb for e in state()['ledger'])
+            assert next(e for e in state()['ledger'] if e['id'] == charge)['payerId'] is None
+            tab('overview')
+            expect(page.locator('#pending-issues')).to_contain_text('代墊者')
+            record('刪成員需確認，個人紀錄與代墊參照一併處理，不留未知 ID')
 
             assert not errors, errors
             assert not external_requests, external_requests

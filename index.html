@@ -119,6 +119,14 @@ thead .driver-cell{z-index:5;background:#eaf0e8}
 .overview-table th{white-space:nowrap}
 .expense-total-label{font-size:12px}
 .day-footer{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:12px}
+.personal-filter{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+.ledger-table{min-width:850px}
+.ledger-table td{text-align:left;vertical-align:top}
+.ledger-table input,.ledger-table select{width:100%}
+.ledger-table .description{min-width:210px}
+.personal-metrics{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+.personal-metrics>div{background:white;border:1px solid var(--line);border-radius:9px;padding:12px 16px}
+.advance-list{margin:0;padding:16px 20px 16px 40px}
 
 @media(max-width:850px){.wrap{padding:20px 16px 35px}
 .top{align-items:flex-start;flex-direction:column}
@@ -176,9 +184,10 @@ body{background:white}
 <script id="trip-core">
 'use strict';
 const TripCore = (() => {
-  const VERSION = 1;
-  const LIMITS = Object.freeze({members:200, days:100, expenses:100, units:1000000000});
+  const VERSION = 2;
+  const LIMITS = Object.freeze({members:200, days:100, expenses:100, ledger:5000, units:1000000000});
   const CATEGORIES = Object.freeze({breakfast:'早餐', lunch:'午餐', dinner:'晚餐', fuel:'油錢', rental:'租車費', parking:'停車費', other:'其他'});
+  const LEDGER_TYPES = Object.freeze({adjustment:'其他用途／調整',charge:'個人加購',payment:'已繳款',refund:'已退款'});
   const isNamed = m => m.name.trim().length > 0;
   const isCar = e => e.category === 'fuel' || e.category === 'rental';
   const id = prefix => prefix + '_' + (globalThis.crypto?.randomUUID?.() || Date.now().toString(36) + Math.random().toString(36).slice(2));
@@ -188,9 +197,10 @@ const TripCore = (() => {
   function day(number=1) {
     return {id:id('d'), name:`第 ${number} 天`, useCar:false, drivers:[], expenses:Object.keys(CATEGORIES).map(expense)};
   }
+  function ledgerEntry(personId) {return {id:id('l'),personId,type:'adjustment',direction:'plus',description:'',amount:'',payerId:null};}
   function createTrip(people=30, days=10) {
     if (!Number.isInteger(people) || people < 1 || people > LIMITS.members || !Number.isInteger(days) || days < 1 || days > LIMITS.days) throw new Error('人數或天數超過範圍');
-    return {version:VERSION, members:Array.from({length:people},()=>({id:id('p'), name:''})), days:Array.from({length:days},(_,i)=>day(i+1))};
+    return {version:VERSION, members:Array.from({length:people},()=>({id:id('p'), name:''})), days:Array.from({length:days},(_,i)=>day(i+1)),ledger:[]};
   }
   function parseAmount(raw) {
     if (typeof raw !== 'string') return {ok:false, units:0};
@@ -233,22 +243,41 @@ const TripCore = (() => {
     return {units:parsed.units, amountValid:parsed.ok, eligible, shares, allocated, blocked, issues};
   }
   function summarize(state) {
-    const people = state.members.filter(isNamed).map(m=>({id:m.id,name:m.name,meals:0,fuel:0,rental:0,other:0,total:0,advanced:0,pay:0,receive:0}));
+    const people = state.members.filter(isNamed).map(m=>({id:m.id,name:m.name,meals:0,fuel:0,rental:0,other:0,personal:0,adjustment:0,total:0,advanced:0,paid:0,refunded:0,pay:0,receive:0}));
     const peopleById = new Map(people.map(p=>[p.id,p]));
     let total=0, allocated=0, unassignedAdvance=0;
-    const issues=[], expenses=[];
+    const issues=[], expenses=[], advances=[], ledgerResults=[];
     for (const d of state.days) for (const e of d.expenses) {
       const result=calculateExpense(state,d,e);
       total+=result.units; allocated+=result.allocated;
       const payer=peopleById.get(e.payerId);
-      if (payer) payer.advanced+=result.units; else unassignedAdvance+=result.units;
+      if (payer) {payer.advanced+=result.units;if(result.units)advances.push({personId:payer.id,dayId:d.id,expenseId:e.id,label:(d.name||'未命名日期')+' · '+(e.name||'未命名費用'),units:result.units});} else unassignedAdvance+=result.units;
       const bucket=['breakfast','lunch','dinner'].includes(e.category)?'meals':e.category==='fuel'?'fuel':e.category==='rental'?'rental':'other';
       for (const p of people) {p[bucket]+=result.shares[p.id]; p.total+=result.shares[p.id];}
       for (const issue of result.issues) issues.push({...issue,dayId:d.id,expenseId:e.id,dayName:d.name,expenseName:e.name});
       expenses.push({dayId:d.id,expenseId:e.id,...result});
     }
-    for (const p of people) {p.pay=Math.max(0,p.total-p.advanced); p.receive=Math.max(0,p.advanced-p.total);}
-    return {people,total,allocated,difference:total-allocated,unassignedAdvance,issues,expenses};
+    for(const entry of state.ledger||[]) {
+      const parsed=parseAmount(entry.amount),person=peopleById.get(entry.personId),payer=peopleById.get(entry.payerId),entryIssues=[];
+      const issue=(code,message)=>entryIssues.push({code,message,ledgerId:entry.id,personId:entry.personId,dayName:'個人結算',expenseName:entry.description||LEDGER_TYPES[entry.type]});
+      if(!parsed.ok)issue('invalid-ledger-amount','金額須為非負數、最多一位小數，且不超過 100,000,000 元。');
+      if(parsed.units>0&&!person)issue('missing-ledger-person','此筆個人紀錄的成員尚未填姓名，請補齊；金額與紀錄仍保留。');
+      let entryAllocated=0;
+      if(entry.type==='charge') {
+        total+=parsed.units;
+        if(person){person.personal+=parsed.units;person.total+=parsed.units;allocated+=parsed.units;entryAllocated=parsed.units;}
+        if(payer){payer.advanced+=parsed.units;if(parsed.units)advances.push({personId:payer.id,ledgerId:entry.id,label:'個人加購 · '+(person?.name||'未具名成員')+' · '+(entry.description||'未命名項目'),units:parsed.units});}
+        else {unassignedAdvance+=parsed.units;if(parsed.units)issue('missing-payer','個人加購尚未指定具名代墊者，請補齊以完成收付款核對。');}
+      } else if(person) {
+        if(entry.type==='adjustment'){const signed=(entry.direction==='minus'?-1:1)*parsed.units;person.adjustment+=signed;person.total+=signed;}
+        else person[entry.type==='payment'?'paid':'refunded']+=parsed.units;
+      }
+      issues.push(...entryIssues);ledgerResults.push({id:entry.id,units:parsed.units,amountValid:parsed.ok,allocated:entryAllocated,issues:entryIssues});
+    }
+    for (const p of people) {const balance=p.total-p.advanced-p.paid+p.refunded;p.pay=Math.max(0,balance);p.receive=Math.max(0,-balance);}
+    const collected=people.reduce((n,p)=>n+p.paid-p.refunded,0);
+    const adjusted=people.reduce((n,p)=>n+p.adjustment,0);
+    return {people,total,allocated,difference:total-allocated,unassignedAdvance,issues,expenses,advances,ledgerResults,collected,adjusted};
   }
   function validateState(input) {
     const fail=message=>{throw new Error(message);};
@@ -256,7 +285,7 @@ const TripCore = (() => {
     const text=(s,max,label)=>{if(typeof s!=='string'||s.length>max)fail(`${label}格式錯誤`); return s;};
     const ids = new Set();
     const readId=x=>{if(typeof x!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(x)||ids.has(x))fail('ID 格式錯誤或重複'); ids.add(x);return x;};
-    if(!object(input)||input.version!==VERSION)fail('不支援的備份版本');
+    if(!object(input)||![1,VERSION].includes(input.version))fail('不支援的備份版本');
     if(!Array.isArray(input.members)||input.members.length<1||input.members.length>LIMITS.members)fail('名單須有 1–200 個名額');
     const members=input.members.map(m=>{if(!object(m))fail('成員格式錯誤');return {id:readId(m.id),name:text(m.name,80,'姓名')};});
     const memberIds=new Set(members.map(m=>m.id));
@@ -276,7 +305,16 @@ const TripCore = (() => {
       });
       return {id:dayId,name,useCar:d.useCar,drivers,expenses};
     });
-    return {version:VERSION,members,days};
+    const rawLedger=input.ledger===undefined&&input.version===1?[]:input.ledger;
+    if(!Array.isArray(rawLedger)||rawLedger.length>LIMITS.ledger)fail('個人紀錄須為陣列且最多 5,000 筆');
+    const ledger=rawLedger.map(entry=>{
+      if(!object(entry)||!Object.hasOwn(LEDGER_TYPES,entry.type)||!memberIds.has(entry.personId)||entry.payerId!==null&&!memberIds.has(entry.payerId))fail('個人紀錄格式或成員參照錯誤');
+      if(entry.type!=='charge'&&entry.payerId!==null)fail('僅個人加購可指定代墊者');
+      const direction=entry.direction??(entry.type==='payment'?'minus':'plus');
+      if(!['plus','minus'].includes(direction)||entry.type!=='adjustment'&&direction!==(entry.type==='payment'?'minus':'plus'))fail('個人紀錄正負方向錯誤');
+      return {id:readId(entry.id),personId:entry.personId,type:entry.type,direction,description:text(entry.description,160,'個人紀錄說明'),amount:text(entry.amount,32,'個人紀錄金額'),payerId:entry.payerId};
+    });
+    return {version:VERSION,members,days,ledger};
   }
   function encode(state) {return JSON.stringify(validateState(state),null,2);}
   function decode(raw) {
@@ -295,7 +333,7 @@ const TripCore = (() => {
     set(1,'breakfast','100',p.slice(1),p[1]);set(1,'fuel','240',p,p[1]);set(1,'other','200',p,p[3]);
     return s;
   }
-  return Object.freeze({VERSION,LIMITS,CATEGORIES,isNamed,isCar,id,expense,day,createTrip,parseAmount,split,calculateExpense,summarize,validateState,encode,decode,example});
+  return Object.freeze({VERSION,LIMITS,CATEGORIES,LEDGER_TYPES,isNamed,isCar,id,expense,day,ledgerEntry,createTrip,parseAmount,split,calculateExpense,summarize,validateState,encode,decode,example});
 })();
 globalThis.TripCore=TripCore;
 </script>
@@ -323,13 +361,13 @@ const TripExport = (() => {
   }
   function report(state,now=new Date()) {
     state=TripCore.validateState(state);
-    const summary=TripCore.summarize(state),named=state.members.filter(TripCore.isNamed),used=new Set(['整趟總覽','每餐參與名單','待處理項目','使用說明'].map(x=>x.toLowerCase()));
-    const columns=[['meals','餐費合計'],['fuel','油錢合計'],['rental','租車費合計'],['other','其他費用合計'],['total','總分攤'],['advanced','已代墊'],['pay','還要付'],['receive','應收回']];
-    const overview={name:'整趟總覽',freezeRows:6,freezeColumns:1,widths:[22,17,17,17,19,17,17,17,17],merges:['A1:I1','B2:I2','A4:I4','A5:I5'],rows:[
+    const summary=TripCore.summarize(state),named=state.members.filter(TripCore.isNamed),used=new Set(['整趟總覽','每餐參與名單','個人紀錄','代墊明細','待處理項目','使用說明'].map(x=>x.toLowerCase()));
+    const columns=[['meals','餐費合計'],['fuel','油錢合計'],['rental','租車費合計'],['other','其他費用合計'],['personal','個人加購'],['adjustment','其他加減'],['total','總應負擔'],['advanced','已代墊'],['paid','已繳款'],['refunded','已退款'],['pay','還要付'],['receive','應收回']];
+    const overview={name:'整趟總覽',freezeRows:6,freezeColumns:1,widths:[22,17,17,17,19,17,17,17,17,17,17,17,17],merges:['A1:M1','B2:M2','A4:M4','A5:M5'],rows:[
       [cell('旅伴帳本｜整趟總覽',3)],textRow('匯出時間（台北）',stamp(now)),
       [cell('全部支出'),yuan(summary.total),cell('已分攤總額'),yuan(summary.allocated),cell('差額'),yuan(summary.difference),cell('待處理項目'),cell(summary.issues.length)],
       [cell(summary.issues.length?'尚有待處理項目，請先完成核對再收付款。':'帳目已核對，所有合法支出均已分攤。',summary.issues.length?7:5)],
-      textRow('其他費用包含停車費；所有金額以元計，精確至 0.1 元。'),header(['姓名',...columns.map(([,label])=>label)]),
+      textRow('總應負擔含個人加購及其他加減。還要付＝總應負擔－已代墊－已繳款＋已退款；負數列應收回。其他加減不列入實際支出與已分攤總額。'),header(['姓名',...columns.map(([,label])=>label)]),
       ...summary.people.map(p=>[cell(p.name),...columns.map(([key])=>yuan(p[key]))]),
       [cell('合計',2),...columns.map(([key])=>cell(summary.people.reduce((sum,p)=>sum+p[key],0)/10,6))]
     ]};
@@ -342,6 +380,16 @@ const TripExport = (() => {
     ]};
     summary.issues.forEach(i=>pending.rows.push([cell(i.dayName),cell(i.expenseName),cell(i.message,7)]));
     if(!summary.issues.length)pending.rows.push(textRow('目前沒有待處理項目'));
+    const name=id=>state.members.find(m=>m.id===id)?.name.trim()||'未具名成員';
+    const personal={name:'個人紀錄',freezeRows:3,freezeColumns:1,widths:[23,24,48,19,19,23,22,65],merges:['A1:H1','A2:H2'],rows:[
+      [cell('個人用途、正負與收退款紀錄',3)],textRow('其他調整只改變個人應付，不列實際支出；加購列入支出並指定代墊者。代墊已自動彙總者不要再次扣抵。'),
+      header(['成員','類型','用途／備註','正負','金額（元）','加購代墊者','正負金額（元）','待處理提醒']),
+      ...state.ledger.map(e=>{const r=summary.ledgerResults.find(r=>r.id===e.id),negative=e.direction==='minus';return [cell(name(e.personId)),cell(TripCore.LEDGER_TYPES[e.type]),cell(e.description),cell(negative?'－ 扣抵':'＋ 加收'),r.amountValid?yuan(r.units):cell('待修正：'+e.amount,7),cell(e.type==='charge'?(e.payerId?name(e.payerId):'未指定'):''),r.amountValid?yuan((negative?-1:1)*r.units):cell('暫不計算'),cell(r.issues.map(i=>i.message).join('；'),r.issues.length?7:0)];})
+    ]};
+    const advances={name:'代墊明細',freezeRows:3,freezeColumns:1,widths:[23,65,22],merges:['A1:C1','A2:C2'],rows:[
+      [cell('代墊明細｜由每日費用與個人加購自動彙總',3)],textRow('每筆費用只記一次；這是付給店家的費用，與交給主辦人的「已繳款」分開。'),header(['代墊者','來源費用','代墊金額（元）']),
+      ...summary.advances.map(a=>[cell(name(a.personId)),cell(a.label),yuan(a.units)])
+    ]};
     const days=state.days.map((day,index)=>{
       const results=day.expenses.map(e=>TripCore.calculateExpense(state,day,e));
       const sum=key=>results.reduce((n,r)=>n+r[key],0);
@@ -376,13 +424,16 @@ const TripExport = (() => {
       textRow('餐費','每天的早餐、午餐、晚餐，以及同類的多筆餐費，各自勾選參與者。沒吃不勾，不分攤該筆。'),
       textRow('每日司機','每日獨立設定。司機有勾選餐費、停車費及其他費用時，照常分攤；只免當日油錢及租車費。'),
       textRow('尾差','所有費用以 0.1 元整數計算，尾差依名單固定順序分配。'),
-      textRow('輸出內容','整趟總覽、每餐參與名單、每一天的明細，以及待處理項目。空白姓名不列入報表成員。'),
+      textRow('輸出內容','整趟總覽、每餐參與名單、每一天的明細、個人紀錄、代墊明細，以及待處理項目。空白姓名不列入總覽成員；個人紀錄仍保留並提示。'),
+      textRow('個人結算','用途、金額及正負分開記錄。其他調整只改變應付，不列實際支出；真正加購選個人加購並指定代墊者。'),
+      textRow('收退款','還要付＝總應負擔－已代墊－已繳款＋已退款，負數改列應收回。已退款是在款項實際退回後登錄。'),
+      textRow('收款核對','主辦人已收款淨額 '+(summary.collected/10).toFixed(1)+' 元；其他用途加減淨額 '+(summary.adjusted/10).toFixed(1)+' 元。已繳款與退款不增加旅程支出。'),
       textRow('Google 試算表','將 .xlsx 匯入 Google 試算表並分享給旅伴作檢視者。匯入後可直接看，不需貼程式或啟用核取方塊。'),
       textRow('後續修改','在原 HTML 修改，再重新匯出。於既有 Google 試算表使用「檔案 → 匯入 → 取代試算表」更新，沿用同一分享網址。'),
       textRow('資料備份','本報表是分享用快照，不能還原完整帳本；請另外在 HTML 匯出 JSON 備份。'),
       textRow('提醒','報表內的「參與／未參與」是記錄結果；實際勾選請回到 HTML。尚有待處理項目時請先修正再結算。')
     ]};
-    return [overview,meals,...days,pending,instructions];
+    return [overview,meals,...days,personal,advances,pending,instructions];
   }
   const crcTable=Uint32Array.from({length:256},(_,i)=>{let c=i;for(let b=0;b<8;b++)c=(c&1)?0xedb88320^(c>>>1):c>>>1;return c>>>0;});
   function crc32(data){let crc=0xffffffff;for(const byte of data)crc=crcTable[(crc^byte)&255]^(crc>>>8);return (crc^0xffffffff)>>>0;}
@@ -443,7 +494,7 @@ globalThis.TripExport=TripExport;
   const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const money=units=>(units/10).toLocaleString('zh-TW',{minimumFractionDigits:1,maximumFractionDigits:1});
   const snapshotElement=$('trip-snapshot'), readOnly=Boolean(snapshotElement);
-  let state=C.createTrip(), active='overview', storageOk=true, initialMessage='', snapshotTime='';
+  let state=C.createTrip(), active='overview', storageOk=true, initialMessage='', snapshotTime='', selectedPerson='';
   if(readOnly) {
     try {
       const snapshot=JSON.parse(snapshotElement.textContent);
@@ -464,7 +515,7 @@ globalThis.TripExport=TripExport;
       }
     }
     const selected=localStorage.getItem(TAB);
-    if(selected==='overview'||state.days.some(d=>d.id===selected))active=selected;
+    if(['overview','personal'].includes(selected)||state.days.some(d=>d.id===selected))active=selected;
   } catch {storageOk=false;initialMessage='瀏覽器儲存空間不可用。仍可操作，但請匯出 JSON 備份，重新整理可能無法保留資料。';}
   function notify(message) {$('flash').textContent=message;}
   function save() {
@@ -480,22 +531,39 @@ globalThis.TripExport=TripExport;
     $('roster-content').innerHTML=`<div class="roster-head"><p class="muted tiny">姓名在此統一修改，所有日期同步。空白姓名不分攤，既有勾選仍保留。</p><button type="button" data-action="add-member" ${state.members.length>=C.LIMITS.members?'disabled':''}>＋ 新增成員</button></div><div class="roster-grid">${state.members.map((m,i)=>`<div class="person-editor"><span class="person-number">${i+1}</span><label class="sr-only" for="name-${m.id}">成員 ${i+1} 姓名</label><input id="name-${m.id}" data-field="member-name" data-person="${m.id}" maxlength="80" placeholder="輸入姓名" value="${esc(m.name)}" autocomplete="off"><button type="button" class="remove danger" data-action="delete-member" data-person="${m.id}" aria-label="刪除成員 ${i+1}" ${state.members.length===1?'disabled':''}>×</button></div>`).join('')}</div>`;
   }
   function renderTabs() {
-    $('tabs').innerHTML=[{id:'overview',name:'整趟總覽'},...state.days].map(d=>`<button type="button" class="tab" id="tab-${d.id}" role="tab" aria-selected="${active===d.id}" aria-controls="view" tabindex="${active===d.id?'0':'-1'}" data-action="tab" data-tab="${d.id}">${esc(d.name||'未命名日期')}</button>`).join('');
+    $('tabs').innerHTML=[{id:'overview',name:'整趟總覽'},{id:'personal',name:'個人結算'},...state.days].map(d=>`<button type="button" class="tab" id="tab-${d.id}" role="tab" aria-selected="${active===d.id}" aria-controls="view" tabindex="${active===d.id?'0':'-1'}" data-action="tab" data-tab="${d.id}">${esc(d.name||'未命名日期')}</button>`).join('');
     $('view').setAttribute('aria-labelledby','tab-'+active);
     document.querySelector('[data-action="add-day"]').disabled=state.days.length>=C.LIMITS.days;
   }
   function renderOverview() {
     const s=C.summarize(state), sum=key=>s.people.reduce((n,p)=>n+p[key],0);
-    const columns=[['meals','餐費合計'],['fuel','油錢合計'],['rental','租車費合計'],['other','其他費用合計'],['total','總分攤'],['advanced','已代墊'],['pay','還要付'],['receive','應收回']];
+    const columns=[['meals','餐費合計'],['fuel','油錢合計'],['rental','租車費合計'],['other','其他費用合計'],['personal','個人加購'],['adjustment','其他加減'],['total','總應負擔'],['advanced','已代墊'],['paid','已繳款'],['refunded','已退款'],['pay','還要付'],['receive','應收回']];
     const rows=s.people.map(p=>`<tr><th scope="row" class="name-cell"><span class="person-label">${esc(p.name)}</span><span class="person-index">名單第 ${state.members.findIndex(m=>m.id===p.id)+1} 位</span></th>${columns.map(([key])=>`<td class="money ${key==='pay'&&p.pay?'due':key==='receive'&&p.receive?'receive':''}" data-summary="${p.id}-${key}">${money(p[key])}</td>`).join('')}</tr>`).join('');
     $('view').innerHTML=`<div class="section-head"><div><h2>整趟總覽</h2><p class="muted">${state.days.length} 天旅程 · ${s.people.length} 位旅伴 <span class="badge">${readOnly?'唯讀快照':'即時彙總'}</span></p></div></div>
       <div class="stats"><div class="stat featured"><div class="label">全部支出</div><div class="value money" id="total-expense">${money(s.total)}<span class="unit">元</span></div><div class="note">包含尚待處理的有效金額</div></div>
-      <div class="stat"><div class="label">已分攤總額</div><div class="value money" id="total-allocated">${money(s.allocated)}<span class="unit">元</span></div><div class="note">所有人的分攤合計</div></div>
+      <div class="stat"><div class="label">已分攤總額</div><div class="value money" id="total-allocated">${money(s.allocated)}<span class="unit">元</span></div><div class="note">費用分攤，不含其他加減收</div></div>
       <div class="stat"><div class="label">差額 · 尚未分攤</div><div class="value money" id="total-difference">${money(s.difference)}<span class="unit">元</span></div><div class="note">全部支出 − 已分攤</div></div>
       <div class="stat"><div class="label">待處理項目</div><div class="value" id="issue-count">${s.issues.length}<span class="unit">項</span></div><div class="note">未指定代墊 ${money(s.unassignedAdvance)} 元</div></div></div>
-      ${s.issues.length?`<div class="warn" id="pending-issues"><strong>${readOnly?'此快照有待管理者處理的項目':'請先處理以下項目，再確認收付款'}</strong><p class="tiny">待處理車資仍列入全部支出與已代墊，但暫不分攤；不合法金額尚未計入支出。</p><ul>${s.issues.map(i=>`<li>${esc(i.dayName||'未命名日期')} · ${esc(i.expenseName||'未命名費用')}：${esc(i.message)} <button type="button" class="text tiny" data-action="goto-expense" data-tab="${i.dayId}" data-expense="${i.expenseId}">${readOnly?'查看明細':'前往處理'} →</button></li>`).join('')}</ul></div>`:`<div class="success">${s.total?'帳目已核對：所有支出均已分攤，代墊者已填齊。':readOnly?'此快照目前沒有支出。':'目前沒有支出。先編輯統一名單，再到每日明細填寫費用與勾選參與者。'}</div>`}
-      <section class="panel"><div class="table-caption"><h3>每人應付與應收</h3><span class="muted tiny">其他費用含停車費 · 單位：元</span></div><div class="table-scroll"><table class="overview-table" aria-label="整趟每人費用總覽"><thead><tr><th scope="col" class="name-cell corner">旅伴</th>${columns.map(([,label])=>`<th scope="col">${label}</th>`).join('')}</tr></thead><tbody>${rows||`<tr><td colspan="9" class="empty"><p>還沒有具名成員，空白名額不列入分攤。</p><button type="button" data-action="open-roster">編輯統一名單</button></td></tr>`}</tbody>${rows?`<tfoot><tr><th scope="row" class="name-cell">合計</th>${columns.map(([key])=>`<td class="money">${money(sum(key))}</td>`).join('')}</tr></tfoot>`:''}</table></div></section>
-      <p class="muted tiny">還要付＝總分攤 − 已代墊；若為負數，改列應收回。同名成員仍以各自固定 ID 獨立計算。</p>`;
+      ${s.issues.length?`<div class="warn" id="pending-issues"><strong>${readOnly?'此快照有待管理者處理的項目':'請先處理以下項目，再確認收付款'}</strong><p class="tiny">待處理車資仍列入全部支出與已代墊，但暫不分攤；不合法金額尚未計入支出。</p><ul>${s.issues.map(i=>`<li>${esc(i.dayName||'未命名日期')} · ${esc(i.expenseName||'未命名費用')}：${esc(i.message)} <button type="button" class="text tiny" data-action="goto-expense" data-tab="${i.ledgerId?'personal':i.dayId}" data-person="${i.personId||''}" data-ledger="${i.ledgerId||''}" data-expense="${i.expenseId||''}">${readOnly?'查看明細':'前往處理'} →</button></li>`).join('')}</ul></div>`:`<div class="success">${s.total?'帳目已核對：所有支出均已分攤，代墊者已填齊。':readOnly?'此快照目前沒有支出。':'目前沒有支出。先編輯統一名單，再到每日明細填寫費用與勾選參與者。'}</div>`}
+      <section class="panel"><div class="table-caption"><h3>每人應付與應收</h3><button type="button" data-action="tab" data-tab="personal">查看個人明細 →</button></div><div class="table-scroll"><table class="overview-table" aria-label="整趟每人費用總覽"><thead><tr><th scope="col" class="name-cell corner">旅伴</th>${columns.map(([,label])=>`<th scope="col">${label}</th>`).join('')}</tr></thead><tbody>${rows||`<tr><td colspan="13" class="empty"><p>還沒有具名成員，空白名額不列入分攤。</p><button type="button" data-action="open-roster">編輯統一名單</button></td></tr>`}</tbody>${rows?`<tfoot><tr><th scope="row" class="name-cell">合計</th>${columns.map(([key])=>`<td class="money">${money(sum(key))}</td>`).join('')}</tr></tfoot>`:''}</table></div></section>
+      <p class="muted tiny">還要付＝總應負擔 − 已代墊 − 已繳款 ＋ 已退款；負數列應收回。其他費用含停車費；個人加購與其他加減另列，不重複計算。</p><p class="muted tiny" id="collected-total">主辦人已收款淨額：${money(s.collected)} 元（已繳款 − 已退款）。其他用途加減淨額：${money(s.adjusted)} 元；其他調整只改變個人應付，不列為實際旅程支出。</p>`;
+  }
+  function renderPersonal() {
+    const s=C.summarize(state);
+    if(!state.members.some(m=>m.id===selectedPerson))selectedPerson=state.members.find(C.isNamed)?.id||state.members[0].id;
+    const p=s.people.find(p=>p.id===selectedPerson),member=state.members.find(m=>m.id===selectedPerson);
+    const entries=state.ledger.filter(e=>e.personId===selectedPerson),advances=s.advances.filter(a=>a.personId===selectedPerson);
+    const metrics=[['adjustment','其他加減'],['total','總應負擔'],['advanced','已代墊'],['paid','已繳款'],['refunded','已退款'],['pay','還要付'],['receive','應收回']];
+    $('view').innerHTML=`<div class="section-head"><div><h2>個人結算</h2><p class="muted">用途、金額與正負分開填寫，同一人可有多筆；代墊從費用明細自動帶入。</p></div></div>
+      <div class="personal-filter"><label for="personal-person">查看成員</label><select id="personal-person" data-field="personal-person">${state.members.map((m,i)=>`<option value="${m.id}" ${m.id===selectedPerson?'selected':''}>${esc(memberName(m))}（${i+1}）</option>`).join('')}</select><button type="button" class="primary" data-action="add-ledger" ${!C.isNamed(member)||state.ledger.length>=C.LIMITS.ledger?'disabled':''}>＋ 新增個人紀錄</button></div>
+      ${!p?'<div class="warn">此成員尚未填姓名，既有紀錄仍保留，但不計入個人結算。請先在統一名單補齊姓名。</div>':''}
+      <div class="personal-metrics">${metrics.map(([key,label])=>`<div><span class="tiny muted">${label}</span><div class="money" data-personal="${key}">${money(p?.[key]||0)} 元</div></div>`).join('')}</div>
+      <section class="panel"><div class="table-caption"><h3>其他用途、加購與收退款</h3><span class="tiny muted">金額均填正數 · 單位：元</span></div><div class="table-scroll" id="personal-scroll"><table class="ledger-table" aria-label="個人紀錄"><thead><tr><th>類型</th><th>用途／備註</th><th>正負</th><th>金額</th><th>加購代墊者</th><th>操作</th></tr></thead><tbody>${entries.map(e=>{
+        const result=s.ledgerResults.find(r=>r.id===e.id);
+        return `<tr><td><select id="ledger-type-${e.id}" data-field="ledger-type" data-ledger="${e.id}" aria-label="紀錄類型">${Object.entries(C.LEDGER_TYPES).map(([value,label])=>`<option value="${value}" ${e.type===value?'selected':''}>${label}</option>`).join('')}</select></td><td class="description"><input id="ledger-description-${e.id}" data-field="ledger-description" data-ledger="${e.id}" aria-label="項目備註" maxlength="160" value="${esc(e.description)}" placeholder="例如額外車資、折讓、訂金"><div class="expense-status">${result.issues.map(i=>esc(i.message)).join('<br>')}</div></td><td><select id="ledger-direction-${e.id}" data-field="ledger-direction" data-ledger="${e.id}" aria-label="正負方向" ${e.type!=='adjustment'?'disabled':''}><option value="plus" ${e.direction==='plus'?'selected':''}>＋ 加收</option><option value="minus" ${e.direction==='minus'?'selected':''}>－ 扣抵</option></select></td><td><input id="ledger-amount-${e.id}" data-field="ledger-amount" data-ledger="${e.id}" aria-label="紀錄金額" inputmode="decimal" maxlength="32" placeholder="0.0" value="${esc(e.amount)}" aria-invalid="${!result.amountValid}"></td><td>${e.type==='charge'?`<select id="ledger-payer-${e.id}" data-field="ledger-payer" data-ledger="${e.id}" aria-label="加購代墊者">${payerOptions(e)}</select>`:`<span class="tiny muted">${e.type==='adjustment'?'其他調整不新增支出':'與主辦人之間的收退款'}</span>`}</td><td><button type="button" class="small danger" data-action="delete-ledger" data-ledger="${e.id}">刪除</button></td></tr>`;
+      }).join('')||'<tr><td colspan="6" class="empty">尚無個人紀錄，按「新增個人紀錄」填用途、金額及正負。</td></tr>'}</tbody></table></div></section>
+      <section class="panel"><div class="table-caption"><h3>已代墊明細（自動彙總）</h3><span class="tiny muted">同一筆費用只記一次</span></div>${advances.length?`<ul class="advance-list">${advances.map(a=>`<li>${esc(a.label)}：<strong class="money">${money(a.units)} 元</strong> <button type="button" class="text tiny" data-action="goto-expense" data-tab="${a.ledgerId?'personal':a.dayId}" data-person="${selectedPerson}" data-ledger="${a.ledgerId||''}" data-expense="${a.expenseId||''}">查看來源 →</button></li>`).join('')}</ul>`:'<p class="empty">尚無代墊紀錄。在每日費用或個人加購指定代墊者，即會自動列入。</p>'}</section>
+      <p class="muted tiny">代墊＝已替旅伴付給店家；已繳款＝已交給主辦人的款項。若每日費用已填代墊者，請勿再次當作已繳款登錄。退款實際付出後才記「已退款」。其他用途的 ＋／－ 調整只改變應付金額，不算新支出；真正加購請選「個人加購」並指定代墊者。</p>`;
   }
   function shareRange(r) {
     const values=r.eligible.map(pid=>r.shares[pid]);
@@ -541,13 +609,13 @@ globalThis.TripExport=TripExport;
     let selection=null;try {if(typeof focused?.selectionStart==='number')selection=[focused.selectionStart,focused.selectionEnd];}catch{}
     const positions=[...document.querySelectorAll('.table-scroll,#tabs')].map(el=>[el.id,el.scrollLeft,el.scrollTop]);
     const scrollY=window.scrollY;
-    renderRoster();renderTabs();active==='overview'?renderOverview():renderDaily();
+    renderRoster();renderTabs();active==='overview'?renderOverview():active==='personal'?renderPersonal():renderDaily();
     if(readOnly) {
       $('roster').hidden=true;
       document.querySelector('.tools').hidden=true;
       document.querySelector('[data-action="add-day"]').hidden=true;
       $('save-status').textContent=`唯讀快照 · 更新於 ${snapshotTime}（台北時間）`;
-      document.querySelectorAll('#view input,#view select').forEach(el=>{el.disabled=true;});
+      document.querySelectorAll('#view input,#view select').forEach(el=>{el.disabled=el.id!=='personal-person';});
       document.querySelectorAll('#view button[data-action]').forEach(el=>{if(!['tab','goto-expense'].includes(el.dataset.action))el.hidden=true;});
     }
     for(const [pid,x,y] of positions){const el=pid&&$(pid);if(el){el.scrollLeft=x;el.scrollTop=y;}}
@@ -561,8 +629,19 @@ globalThis.TripExport=TripExport;
   }
   function toggleIn(list,value,on) {return on?[...new Set([...list,value])]:list.filter(x=>x!==value);}
   function handleField(el) {
-    if(readOnly)return;
     const field=el.dataset.field;if(!field)return;
+    if(field==='personal-person'){selectedPerson=el.value;render();return;}
+    if(readOnly)return;
+    const entry=state.ledger.find(e=>e.id===el.dataset.ledger);
+    if(entry&&field.startsWith('ledger-')) {
+      if(field==='ledger-type'){entry.type=el.value;entry.direction=entry.type==='payment'?'minus':'plus';if(entry.type!=='charge')entry.payerId=null;}
+      else if(field==='ledger-direction'&&entry.type==='adjustment')entry.direction=el.value;
+      else if(field==='ledger-description')entry.description=el.value;
+      else if(field==='ledger-amount')entry.amount=el.value;
+      else if(field==='ledger-payer')entry.payerId=el.value||null;
+      else return;
+      commit();return;
+    }
     const d=currentDay(), e=d?.expenses.find(e=>e.id===el.dataset.expense), m=state.members.find(m=>m.id===el.dataset.person);
     if(field==='member-name'&&m)m.name=el.value;
     else if(field==='day-name'&&d)d.name=el.value;
@@ -593,7 +672,16 @@ globalThis.TripExport=TripExport;
     if(readOnly&&!['tab','goto-expense'].includes(action))return;
     if(action==='tab'){selectTab(button.dataset.tab);return;}
     if(action==='open-roster'){$('roster').open=true;$('roster').scrollIntoView({block:'start'});$('name-'+state.members[0].id)?.focus();return;}
-    if(action==='goto-expense'){selectTab(button.dataset.tab);$('amount-'+eid)?.focus();return;}
+    if(action==='goto-expense'){if(button.dataset.person)selectedPerson=button.dataset.person;if(button.dataset.ledger){const source=state.ledger.find(e=>e.id===button.dataset.ledger);if(source)selectedPerson=source.personId;}selectTab(button.dataset.tab);$(button.dataset.ledger?'ledger-amount-'+button.dataset.ledger:'amount-'+eid)?.focus();return;}
+    if(action==='add-ledger'){
+      const member=state.members.find(m=>m.id===selectedPerson);if(!member||!C.isNamed(member)||state.ledger.length>=C.LIMITS.ledger)return;
+      const entry=C.ledgerEntry(selectedPerson);state.ledger.push(entry);commit();$('ledger-description-'+entry.id).focus();return;
+    }
+    if(action==='delete-ledger'){
+      const entry=state.ledger.find(e=>e.id===button.dataset.ledger);if(!entry)return;
+      if((entry.description||entry.amount||entry.payerId)&&!confirm('確定刪除此筆個人紀錄（用途、加購或收退款）？結算金額將重新計算。'))return;
+      state.ledger=state.ledger.filter(e=>e.id!==entry.id);commit();return;
+    }
     if(action==='import'){$('import-file').click();return;}
     if(action==='export-sheet'){
       try{
@@ -627,9 +715,10 @@ globalThis.TripExport=TripExport;
     if(action==='delete-member'){
       if(state.members.length===1)return;
       const pid=button.dataset.person, m=state.members.find(m=>m.id===pid);
-      const hasData=m.name.trim()||state.days.some(d=>d.drivers.includes(pid)||d.expenses.some(e=>e.payerId===pid||e.participantIds.includes(pid)));
-      if(hasData&&!confirm(`確定刪除「${memberName(m)}」？將移除所有日期的司機、參與與代墊關聯，剩餘成員會重新分攤；建議先備份。`))return;
+      const hasData=m.name.trim()||state.ledger.some(e=>e.personId===pid||e.payerId===pid)||state.days.some(d=>d.drivers.includes(pid)||d.expenses.some(e=>e.payerId===pid||e.participantIds.includes(pid)));
+      if(hasData&&!confirm(`確定刪除「${memberName(m)}」？將移除其個人紀錄、所有日期的司機、參與與代墊關聯，剩餘成員會重新分攤；建議先備份。`))return;
       state.members=state.members.filter(m=>m.id!==pid);
+      state.ledger=state.ledger.filter(e=>e.personId!==pid);state.ledger.forEach(e=>{if(e.payerId===pid)e.payerId=null;});
       state.days.forEach(d=>{d.drivers=d.drivers.filter(x=>x!==pid);d.expenses.forEach(e=>{e.participantIds=e.participantIds.filter(x=>x!==pid);if(e.payerId===pid)e.payerId=null;});});commit();return;
     }
     if(action==='add-day'){
@@ -657,7 +746,7 @@ globalThis.TripExport=TripExport;
   });
   $('tabs').addEventListener('keydown',event=>{
     if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
-    const ids=['overview',...state.days.map(d=>d.id)], index=ids.indexOf(active);
+    const ids=['overview','personal',...state.days.map(d=>d.id)], index=ids.indexOf(active);
     const next=event.key==='Home'?0:event.key==='End'?ids.length-1:(index+(event.key==='ArrowRight'?1:-1)+ids.length)%ids.length;
     event.preventDefault();selectTab(ids[next]);$('tab-'+active).focus();
   });

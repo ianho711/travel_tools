@@ -224,7 +224,7 @@ test('匯入格式、版本、ID 重複、未知參照、錯誤型別及人數�
   const original = C.example(), backup = C.encode(original);
   assert.throws(() => C.decode('{bad json'), /JSON/);
   const invalid = [
-    s => { s.version = 2; },
+    s => { s.version = 9; },
     s => { s.members[1].id = s.members[0].id; },
     s => { s.days[1].id = s.days[0].id; },
     s => { s.days[0].expenses[1].id = s.days[0].expenses[0].id; },
@@ -252,4 +252,160 @@ test('暫存的不合法金額可備份與還原，但不計入支出，持續�
   assert.equal(restored.days[0].expenses[1].amount, '-1');
   assert.equal(C.summarize(restored).total, 0);
   assert.ok(C.summarize(restored).issues.some(i => i.code === 'invalid-amount'));
+});
+
+function ledger(s, person, type, amount, payer = null, direction = type === 'payment' ? 'minus' : 'plus') {
+  const e = C.ledgerEntry(s.members[person].id);
+  Object.assign(e, { type, amount, direction, description: '測試用途', payerId: payer === null ? null : s.members[payer].id });
+  s.ledger.push(e);
+  return e;
+}
+
+test('其他用途分開填金額與正負，額外車資加收 4000 後應付 10280', () => {
+  const s = fixture(2, 1);
+  fill(s, 0, 'other', '6280', [0], 1);
+  ledger(s, 0, 'adjustment', '4000');
+  const r = C.summarize(s), p = r.people[0];
+  assert.equal(p.total, 102800); assert.equal(p.pay, 102800);
+  assert.equal(p.adjustment, 40000); assert.equal(p.paid, 0);
+  assert.equal(r.adjusted, 40000);
+  assert.equal(r.total, 62800); assert.equal(r.allocated, 62800);
+});
+
+test('個人加購只算本人，代墊 7000 自動扣一次：19250＋1500－7000＝13750', () => {
+  const s = fixture(2, 1);
+  fill(s, 0, 'lunch', '7000', [0], 0);
+  fill(s, 0, 'dinner', '12250', [0], 1);
+  ledger(s, 0, 'charge', '1500', 1);
+  const r = C.summarize(s), p = r.people[0];
+  assert.equal(p.personal, 15000); assert.equal(p.total, 207500);
+  assert.equal(p.advanced, 70000); assert.equal(p.pay, 137500);
+  assert.equal(r.advances.filter(a => a.personId === p.id).length, 1);
+  assert.equal(r.total, 207500); assert.equal(r.allocated, r.total);
+  assert.equal(r.issues.length, 0);
+});
+
+test('先收 10000，費用 6740 時應退 3260；實際退款後結清，支出不膨脹', () => {
+  const s = fixture(2, 1);
+  fill(s, 0, 'dinner', '6740', [0], 1);
+  ledger(s, 0, 'payment', '10000');
+  let r = C.summarize(s);
+  assert.equal(r.people[0].receive, 32600); assert.equal(r.collected, 100000);
+  ledger(s, 0, 'refund', '3260'); r = C.summarize(s);
+  assert.equal(r.people[0].pay, 0); assert.equal(r.people[0].receive, 0);
+  assert.equal(r.collected, 67400); assert.equal(r.total, 67400);
+  assert.equal(r.allocated, 67400); assert.equal(r.issues.length, 0);
+});
+
+test('8356＋450＋700－代墊5250＝4256，保留精確金額而不自行取整', () => {
+  const s = fixture(2, 1);
+  fill(s, 0, 'dinner', '8356', [0], 1);
+  fill(s, 0, 'other', '5250', [1], 0);
+  ledger(s, 0, 'charge', '450', 1); ledger(s, 0, 'charge', '700', 1);
+  const p = C.summarize(s).people[0];
+  assert.equal(p.total, 95060); assert.equal(p.advanced, 52500); assert.equal(p.pay, 42560);
+});
+
+test('同人多筆加減獨立且按 0.1 元整數結算，減收不當作已繳款', () => {
+  const s = fixture(2, 1);
+  ledger(s, 0, 'adjustment', '100');
+  ledger(s, 0, 'adjustment', '0.1', null, 'minus');
+  ledger(s, 0, 'adjustment', '0.2', null, 'minus');
+  ledger(s, 1, 'adjustment', '30', null, 'minus');
+  const r = C.summarize(s);
+  assert.equal(r.people[0].adjustment, 997); assert.equal(r.people[0].pay, 997);
+  assert.equal(r.people[0].paid, 0);
+  assert.equal(r.people[1].receive, 300); assert.equal(r.people[1].total, -300);
+  assert.equal(r.adjusted, 697); assert.equal(r.total, 0); assert.equal(r.allocated, 0);
+});
+
+test('個人加購可由另一成員代墊，來源可核對，不重複計支出', () => {
+  const s = fixture(3, 1);
+  const e = ledger(s, 0, 'charge', '350', 2);
+  const r = C.summarize(s);
+  assert.equal(r.people[0].personal, 3500); assert.equal(r.people[0].pay, 3500);
+  assert.equal(r.people[2].advanced, 3500); assert.equal(r.people[2].receive, 3500);
+  assert.equal(r.advances[0].ledgerId, e.id); assert.equal(r.total, 3500);
+  assert.equal(r.unassignedAdvance, 0);
+});
+
+test('個人紀錄遇空白姓名不消失、明確警告，補回姓名後金額恢復', () => {
+  const s = fixture(2, 1);
+  ledger(s, 0, 'charge', '350', 1);
+  ledger(s, 0, 'payment', '100'); ledger(s, 0, 'adjustment', '10');
+  s.members[0].name = ' ';
+  let r = C.summarize(s);
+  assert.equal(r.total, 3500); assert.equal(r.allocated, 0);
+  assert.equal(r.collected, 0); assert.equal(r.adjusted, 0);
+  assert.equal(r.issues.filter(i => i.code === 'missing-ledger-person').length, 3);
+  const restored = C.decode(C.encode(s)); assert.equal(restored.ledger.length, 3);
+  restored.members[0].name = '恢復姓名'; r = C.summarize(restored);
+  assert.equal(r.people[0].total, 3600); assert.equal(r.people[0].pay, 2600);
+  assert.equal(r.difference, 0);
+});
+
+test('個人紀錄非法金額不產生 NaN，零元空白不警告，缺加購代墊者提示', () => {
+  for (const amount of ['-1', '1.23', 'NaN', 'Infinity']) {
+    const s = fixture(); ledger(s, 0, 'adjustment', amount);
+    const r = C.summarize(s);
+    assert.equal(r.people[0].total, 0); assert.equal(r.issues[0].code, 'invalid-ledger-amount');
+    assert.ok(Object.values(r.people[0]).filter(v => typeof v === 'number').every(Number.isSafeInteger));
+  }
+  const s = fixture(); ledger(s, 0, 'charge', ''); ledger(s, 0, 'payment', '0');
+  assert.equal(C.summarize(s).issues.length, 0);
+  ledger(s, 0, 'charge', '1');
+  assert.equal(C.summarize(s).unassignedAdvance, 10);
+  assert.ok(C.summarize(s).issues.some(i => i.code === 'missing-payer'));
+});
+
+test('改名保留個人加減、代墊和繳款，JSON 往返後全部一致', () => {
+  const s = fixture(); ledger(s, 0, 'adjustment', '100', null, 'minus');
+  ledger(s, 1, 'charge', '350', 0); ledger(s, 0, 'payment', '1000');
+  const before = C.summarize(s); s.members[0].name = '新姓名';
+  const restored = C.decode(C.encode(s)), after = C.summarize(restored);
+  assert.equal(json(restored), json(s));
+  assert.equal(after.people[0].advanced, before.people[0].advanced);
+  assert.equal(after.people[0].receive, before.people[0].receive);
+  assert.equal(json(after), json(C.summarize(s)));
+});
+
+test('舊版 version 1 備份自動升級，保留所有 ID 與原費用，不新增假紀錄', () => {
+  const s = C.example(), original = C.summarize(s);
+  const old = JSON.parse(C.encode(s)); old.version = 1; delete old.ledger;
+  const restored = C.decode(JSON.stringify(old));
+  assert.equal(restored.version, C.VERSION); assert.equal(restored.ledger.length, 0);
+  assert.equal(json(restored.members), json(s.members)); assert.equal(json(restored.days), json(s.days));
+  assert.equal(json(C.summarize(restored)), json(original));
+});
+
+test('個人紀錄未知 ID／類型／方向／重複 ID 皆拒絕，原備份不變', () => {
+  const s = fixture(); ledger(s, 0, 'payment', '100');
+  const backup = C.encode(s);
+  for (const mutate of [
+    s => { s.ledger[0].personId = 'unknown'; },
+    s => { s.ledger[0].payerId = s.members[1].id; },
+    s => { s.ledger[0].type = '__proto__'; },
+    s => { s.ledger[0].direction = 'plus'; },
+    s => { s.ledger[0].direction = 'wrong'; },
+    s => { s.ledger[0].id = s.members[0].id; },
+    s => { s.ledger[0].amount = 100; },
+    s => { s.ledger = {}; },
+    s => { delete s.ledger; }
+  ]) {
+    const bad = JSON.parse(backup); mutate(bad); assert.throws(() => C.validateState(bad));
+    assert.equal(C.encode(s), backup);
+  }
+});
+
+test('實際費用逐筆守恆，加減與收退款另列且資金核對恆等式成立', () => {
+  const s = C.example();
+  ledger(s, 0, 'charge', '350', 1); ledger(s, 1, 'payment', '1000');
+  ledger(s, 1, 'refund', '100'); ledger(s, 2, 'adjustment', '6', null, 'minus');
+  ledger(s, 3, 'adjustment', '4000');
+  const r = C.summarize(s);
+  assert.equal(r.total, r.allocated); assert.equal(r.difference, 0);
+  assert.equal(r.people.reduce((n, p) => n + p.total - p.adjustment, 0), r.allocated);
+  assert.equal(r.people.reduce((n, p) => n + p.advanced, 0), r.total);
+  assert.equal(r.people.reduce((n, p) => n + p.pay - p.receive, 0), r.adjusted - r.collected);
+  assert.ok(r.expenses.every(e => totalShares(e) === e.units));
 });
