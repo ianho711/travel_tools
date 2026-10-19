@@ -61,7 +61,7 @@ def main():
             context.route('**/*', route_request)
             page.goto(url)
             expect(page).to_have_title('旅伴帳本｜旅遊費用分攤')
-            expect(page.get_by_role('tab')).to_have_count(12)
+            expect(page.get_by_role('tab')).to_have_count(13)
             expect(page.locator('#total-expense')).to_have_text('0.0元')
             expect(page.locator('#roster-summary')).to_contain_text('0 位已填姓名 / 30 個名額')
             record('初始 30 人／10 天，無假支出，頁面無外部依賴')
@@ -493,6 +493,324 @@ def main():
             expect(page.locator('#total-expense')).to_have_text('0.0元')
             assert len(state()['members']) == 30 and len(state()['days']) == 10
             record('載入範例有有效帳目且無待處理，重設確實恢復空白 30 人／10 天')
+
+            # Whole-trip costs use ride-days; gasoline paid at return is never billed only to that day.
+            roster()
+            for i, name in enumerate(['司機甲', '旅伴乙', '旅伴丙']):
+                page.locator('[data-field="member-name"]').nth(i).fill(name)
+            roster(False)
+            trip = state()
+            va, vb, vc = [m['id'] for m in trip['members'][:3]]
+            trip_days = [d['id'] for d in trip['days'][:4]]
+            for did in trip_days:
+                tab(did)
+                page.locator('[data-field="use-car"]').check()
+                driver(did, va).check()
+            tab('vehicles')
+            before_trip = state()
+            page.get_by_role('button', name='＋ 新增整趟車資', exact=True).click()
+            page.get_by_role('button', name='取消', exact=True).click()
+            assert state() == before_trip
+            page.get_by_role('button', name='＋ 新增整趟車資', exact=True).click()
+            fuel_trip = page.locator('#expense-dialog').get_attribute('data-expense')
+            field('expense-name', fuel_trip).fill('還車總加油')
+            field('amount', fuel_trip).fill('600')
+            field('payer', fuel_trip).select_option(va)
+            expect(page.locator('#trip-method')).to_have_value('person-days')
+
+            def ride(did, pid):
+                return page.locator(f'#expense-dialog [data-field="trip-participation"][data-day="{did}"][data-person="{pid}"]')
+
+            for i, did in enumerate(trip_days):
+                ride(did, va).check()
+                ride(did, vb).check()
+                if i < 2:
+                    ride(did, vc).check()
+            expect(page.locator('#expense-preview')).to_contain_text('6 人天')
+            expect(page.locator(f'[data-trip-total="{va}"]')).to_have_text('0.0')
+            expect(page.locator(f'[data-trip-total="{vb}"]')).to_have_text('400.0')
+            expect(page.locator(f'[data-trip-total="{vc}"]')).to_have_text('200.0')
+            expect(page.locator(f'[data-trip-billable="{vb}"]')).to_have_text('4')
+            expect(page.locator(f'[data-trip-billable="{vc}"]')).to_have_text('2')
+            selected_day = page.locator(f'[data-field="trip-day"][data-day="{trip_days[1]}"]')
+            selected_day.uncheck()
+            selected_day.check()
+            expect(ride(trip_days[1], vc)).to_be_checked()
+            assert state() == before_trip
+            page.screenshot(path=str(artifacts / 'desktop-trip-expense.png'), full_page=True)
+            save_fee()
+            expect(page.locator(f'[data-vehicle="{vb}-fuel"]')).to_have_text('400.0')
+            expect(page.locator(f'[data-vehicle="{vc}-fuel"]')).to_have_text('200.0')
+            tab('overview')
+            expect(page.locator('#total-expense')).to_have_text('600.0元')
+            expect(page.locator('#total-difference')).to_have_text('0.0元')
+            assert all(e['amount'] == '' for d in state()['days'] for e in d['expenses'])
+            record('整趟600元依4天／2天分成400／200；司機零元，日期重勾保留名單，取消不改帳，費用不重複列入每日')
+
+            tab('vehicles')
+            page.get_by_role('button', name='＋ 新增整趟車資', exact=True).click()
+            rental_trip = page.locator('#expense-dialog').get_attribute('data-expense')
+            field('expense-name', rental_trip).fill('整趟租車')
+            field('category', rental_trip).select_option('rental')
+            field('amount', rental_trip).fill('1200')
+            field('payer', rental_trip).select_option(va)
+            page.get_by_role('button', name='沿用上一筆搭車名單', exact=True).click()
+            expect(page.locator('#expense-preview')).to_contain_text('6 人天')
+            expect(page.locator(f'[data-trip-total="{vb}"]')).to_have_text('800.0')
+            save_fee()
+            tab(trip_days[0])
+            driver(trip_days[0], vb).check()
+            tab(trip_days[1])
+            driver(trip_days[1], va).uncheck()
+            driver(trip_days[1], vc).check()
+            tab('vehicles')
+            expect(page.locator(f'[data-vehicle="{va}-fuel"]')).to_have_text('120.0')
+            expect(page.locator(f'[data-vehicle="{vb}-fuel"]')).to_have_text('360.0')
+            expect(page.locator(f'[data-vehicle="{vc}-fuel"]')).to_have_text('120.0')
+            expect(page.locator(f'[data-vehicle="{vb}-rental"]')).to_have_text('720.0')
+            open_fee(fuel_trip)
+            expect(page.locator(f'[data-trip-billable="{va}"]')).to_have_text('1')
+            expect(page.locator(f'[data-trip-billable="{vb}"]')).to_have_text('3')
+            expect(page.locator(f'[data-trip-billable="{vc}"]')).to_have_text('1')
+            page.get_by_role('button', name='取消', exact=True).click()
+            record('租車可沿用上一筆名單；修改每日司機與多位司機後，整趟油錢／租車費立即更新，只免當日')
+
+            tab(trip_days[3])
+            safe_trip = state()
+            dialog(lambda: page.locator('[data-field="use-car"]').click(), False)
+            assert state() == safe_trip
+            dialog(lambda: page.locator('[data-field="use-car"]').click())
+            tab('overview')
+            expect(page.locator('#total-expense')).to_have_text('1,800.0元')
+            expect(page.locator('#total-difference')).to_have_text('1,800.0元')
+            expect(page.locator('#pending-issues')).to_contain_text('此日未用車')
+            tab(trip_days[3])
+            page.locator('[data-field="use-car"]').check()
+            tab('overview')
+            expect(page.locator('#total-difference')).to_have_text('0.0元')
+            record('整趟車資引用的日期取消用車須確認，費用保留並列待處理，恢復用車後重新分攤')
+
+            tab('vehicles')
+            before_trip_export = state()
+            with page.expect_download() as info:
+                page.get_by_role('button', name='匯出 JSON', exact=True).click()
+            trip_backup = artifacts / 'trip-car-backup.json'
+            info.value.save_as(trip_backup)
+            assert json.loads(trip_backup.read_text()) == before_trip_export
+            malformed = json.loads(trip_backup.read_text())
+            malformed['carExpenses'][0]['rides'][0]['dayId'] = 'unknown'
+            page.locator('#import-file').set_input_files({'name':'bad-trip.json','mimeType':'application/json','buffer':json.dumps(malformed).encode()})
+            expect(page.locator('#flash')).to_contain_text('匯入失敗，原資料未變更')
+            assert state() == before_trip_export
+            with page.expect_download() as info:
+                page.get_by_role('button', name='匯出試算表', exact=True).click()
+            trip_xlsx = artifacts / 'trip-car-report.xlsx'
+            info.value.save_as(trip_xlsx)
+            workbook = load_workbook(trip_xlsx)
+            assert workbook['整趟車資']['A4'].value == '還車總加油'
+            assert workbook['整趟車資']['D4'].value == 600
+            assert workbook['整趟車資']['D5'].value == 1200
+            assert workbook['整趟總覽']['C8'].value == 360
+            assert workbook['整趟總覽']['D8'].value == 720
+            assert workbook['車資逐日核對']['H4'].value == 0
+            assert workbook['車資逐日核對']['H7'].value == 120
+            assert workbook['車資逐日核對']['I7'].value == 1
+            page.reload()
+            expect(page.locator('#tab-vehicles')).to_have_attribute('aria-selected', 'true')
+            assert state() == before_trip_export
+            dialog(lambda: page.get_by_role('button', name='重設全部', exact=True).click())
+            dialog(lambda: page.locator('#import-file').set_input_files(str(trip_backup)))
+            assert state() == before_trip_export
+            record('整趟車資JSON下載、錯誤匯入不覆蓋、重新整理及還原一致；XLSX含計費天數與逐日核對')
+
+            tab('vehicles')
+            with page.expect_download() as info:
+                page.get_by_role('button', name='匯出唯讀網頁', exact=True).click()
+            trip_view = artifacts / 'trip-car-view.html'
+            info.value.save_as(trip_view)
+            context.route('**/trip-car-view.html', lambda r:r.fulfill(path=str(trip_view),content_type='text/html; charset=utf-8'))
+            trip_reader = context.new_page()
+            trip_reader.goto(url.replace('index.html','trip-car-view.html'))
+            trip_reader.locator('#tab-vehicles').click()
+            expect(trip_reader.locator(f'[data-vehicle="{vb}-fuel"]')).to_have_text('360.0')
+            trip_reader.locator('#edit-' + fuel_trip).click()
+            expect(trip_reader.locator(f'[data-trip-billable="{vb}"]')).to_have_text('3')
+            assert trip_reader.locator('#expense-dialog input:not(:disabled),#expense-dialog select:not(:disabled)').count() == 0
+            expect(trip_reader.locator('#expense-dialog [data-action="save-expense"]')).to_have_count(0)
+            trip_reader.get_by_role('button', name='關閉', exact=True).click()
+            trip_reader.close()
+            assert state() == before_trip_export
+            page.set_viewport_size({'width':390,'height':844})
+            assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
+            open_fee(fuel_trip)
+            expect(ride(trip_days[0], vb)).to_be_checked()
+            ride(trip_days[0], vb).uncheck()
+            ride(trip_days[0], vb).check()
+            page.screenshot(path=str(artifacts / 'mobile-trip-expense.png'),full_page=True)
+            page.get_by_role('button', name='取消', exact=True).click()
+            assert state() == before_trip_export
+            page.set_viewport_size({'width':1440,'height':1000})
+            record('整趟車資唯讀快照可查看且不能修改；手機跨日checkbox可操作，取消不影響資料')
+
+            tab(trip_days[3])
+            dialog(lambda: page.get_by_role('button', name='刪除此天', exact=True).click(), False)
+            assert state() == before_trip_export
+            dialog(lambda: page.get_by_role('button', name='刪除此天', exact=True).click())
+            assert all(ride['dayId'] != trip_days[3] for e in state()['carExpenses'] for ride in e['rides'])
+            tab('vehicles')
+            expect(page.locator(f'[data-vehicle="{vb}-fuel"]')).to_have_text('300.0')
+            roster()
+            dialog(lambda: page.locator('[data-action="delete-member"]').first.click(), False)
+            dialog(lambda: page.locator('[data-action="delete-member"]').first.click())
+            assert all(e['payerId'] is None and all(va not in r['participantIds'] for r in e['rides']) for e in state()['carExpenses'])
+            tab('overview')
+            expect(page.locator('#pending-issues')).to_contain_text('代墊者')
+            record('刪除已有日期或成員須確認，整趟乘車與代墊參照同步移除，剩餘日期重算且保留車資')
+            dialog(lambda: page.get_by_role('button', name='重設全部', exact=True).click())
+
+            # Fleet calculator: separate vehicles, one shared ride plan, and meal-only members.
+            roster()
+            for i, name in enumerate(['司機甲', '搭4天乙', '搭2天丙', '包車丁']):
+                page.locator('[data-field="member-name"]').nth(i).fill(name)
+            roster(False)
+            fleet = state()
+            fa, fb, fc, fd = [m['id'] for m in fleet['members'][:4]]
+            fleet_days = [d['id'] for d in fleet['days'][:4]]
+            for did in fleet_days:
+                tab(did)
+                page.locator('[data-field="use-car"]').check()
+                driver(did, fa).check()
+            tab(fleet_days[0])
+            meal_id = fleet['days'][0]['expenses'][2]['id']
+            parking_id = fleet['days'][0]['expenses'][5]['id']
+            set_fee(meal_id, '100', [fa,fb,fc,fd], fa)
+            set_fee(parking_id, '40', [fa,fb,fc,fd], fa)
+            roster()
+            page.locator(f'[data-field="exclude-transport"][data-person="{fd}"]').check()
+            roster(False)
+            share(meal_id, fd, '25.0')
+            share(parking_id, fd, '0.0')
+            expect(part(parking_id, fd)).to_be_disabled()
+            tab('vehicles')
+            vehicle_ids = []
+            for name, rent, gas, gas_payer in [('大車1','7000','1200',fa),('大車2','6500','1200',fa),('小車','5250','800',fb)]:
+                page.get_by_role('button', name='＋ 新增車輛', exact=True).click()
+                page.locator('#vehicle-name').fill(name)
+                page.locator('#vehicle-rental-amount').fill(rent)
+                page.locator('#vehicle-fuel-amount').fill(gas)
+                page.locator('#vehicle-rental-payer').select_option(fa)
+                page.locator('#vehicle-fuel-payer').select_option(gas_payer)
+                page.get_by_role('button', name='儲存車輛', exact=True).click()
+                vehicle_ids.append(state()['vehicles'][-1]['id'])
+            expect(page.locator('[data-transport="rental"]')).to_have_text('18,750.0元')
+            expect(page.locator('[data-transport="fuel"]')).to_have_text('3,200.0元')
+            expect(page.locator('[data-transport="total"]')).to_have_text('21,950.0元')
+            expect(page.locator('[aria-label="各車交通費用"] tbody tr')).to_have_count(3)
+            page.get_by_role('button', name='設定整趟搭車名單', exact=True).click()
+            page.locator('#expense-dialog [data-action="select-all"]').click()
+            for did in fleet_days[2:]:
+                ride(did, fc).uncheck()
+            expect(ride(fleet_days[0], fd)).to_be_disabled()
+            expect(ride(fleet_days[0], fd)).not_to_be_checked()
+            expect(page.locator(f'[data-trip-billable="{fd}"]')).to_have_text('0')
+            expect(page.locator(f'[data-trip-total="{fd}"]')).to_have_text('0.0')
+            expect(page.locator('#expense-preview')).to_contain_text('6 人天')
+            page.get_by_role('button', name='儲存搭車名單', exact=True).click()
+            assert len(state()['carExpenses']) == 6
+            assert all(e['rides'] == state()['transportRides'] for e in state()['carExpenses'])
+            expect(page.locator(f'[data-vehicle="{fd}-fuel"]')).to_have_text('0.0')
+            expect(page.locator(f'[data-vehicle="{fd}-rental"]')).to_have_text('0.0')
+            page.screenshot(path=str(artifacts / 'desktop-fleet.png'), full_page=True)
+            record('三台車分別輸入三筆租金與三筆油錢，租金各不相同，合計21950；搭車名單只設定一次並套用全部六筆')
+            tab('overview')
+            expect(page.locator('#total-expense')).to_have_text('22,090.0元')
+            expect(page.locator('#total-difference')).to_have_text('0.0元')
+            expect(page.locator(f'[data-summary="{fd}-meals"]')).to_have_text('25.0')
+            expect(page.locator(f'[data-summary="{fd}-total"]')).to_have_text('25.0')
+            expect(page.locator(f'[data-summary="{fd}-fuel"]')).to_have_text('0.0')
+            expect(page.locator(f'[data-summary="{fd}-rental"]')).to_have_text('0.0')
+            expect(page.locator(f'[data-summary="{fb}-advanced"]')).to_have_text('800.0')
+            record('包車／交通自理者餐費正常、停車和車資全排除，交通全選跳過，乘車人天為0；各車代墊正確')
+
+            tab('vehicles')
+            saved_fleet = state()
+            page.locator(f'[data-action="edit-vehicle"][data-vehicle="{vehicle_ids[2]}"]').click()
+            page.locator('#vehicle-name').fill('小車改名')
+            page.locator('#vehicle-fuel-amount').fill('900')
+            page.get_by_role('button', name='取消', exact=True).click()
+            assert state() == saved_fleet
+            page.locator(f'[data-action="edit-vehicle"][data-vehicle="{vehicle_ids[2]}"]').click()
+            page.locator('#vehicle-name').fill('小車改名')
+            page.locator('#vehicle-fuel-amount').fill('900')
+            page.get_by_role('button', name='儲存車輛', exact=True).click()
+            expect(page.locator('[data-transport="total"]')).to_have_text('22,050.0元')
+            assert [e['id'] for e in state()['carExpenses']] == [e['id'] for e in saved_fleet['carExpenses']]
+            page.locator(f'[data-action="edit-vehicle"][data-vehicle="{vehicle_ids[2]}"]').click()
+            page.locator('#vehicle-fuel-amount').fill('800')
+            page.get_by_role('button', name='儲存車輛', exact=True).click()
+            record('車名／油錢可修改且自動更新總車資，取消不寫入，固定車輛與費用ID保留')
+
+            saved_fleet = state()
+            with page.expect_download() as info:
+                page.get_by_role('button', name='匯出 JSON', exact=True).click()
+            fleet_backup = artifacts / 'fleet-backup.json'
+            info.value.save_as(fleet_backup)
+            assert json.loads(fleet_backup.read_text()) == saved_fleet
+            with page.expect_download() as info:
+                page.get_by_role('button', name='匯出試算表', exact=True).click()
+            fleet_xlsx = artifacts / 'fleet-report.xlsx'
+            info.value.save_as(fleet_xlsx)
+            fleet_report = load_workbook(fleet_xlsx)
+            assert fleet_report['各車交通費']['A4'].value == '大車1'
+            assert fleet_report['各車交通費']['B4'].value == 7000
+            assert fleet_report['各車交通費']['C4'].value == 1200
+            assert fleet_report['各車交通費']['D4'].value == 8200
+            assert fleet_report['各車交通費']['B7'].value == 18750
+            assert fleet_report['各車交通費']['C7'].value == 3200
+            assert fleet_report['各車交通費']['D7'].value == 21950
+            assert fleet_report['整趟總覽']['C10'].value == 0
+            assert fleet_report['整趟總覽']['B10'].value == 25
+            page.reload()
+            assert state() == saved_fleet
+            dialog(lambda: page.get_by_role('button', name='重設全部', exact=True).click())
+            dialog(lambda: page.locator('#import-file').set_input_files(str(fleet_backup)))
+            assert state() == saved_fleet
+            record('三車、共用名單及交通自理設定可保存／還原；實際XLSX含逐車明細與總租金、總油錢、總車資')
+
+            tab('vehicles')
+            with page.expect_download() as info:
+                page.get_by_role('button', name='匯出唯讀網頁', exact=True).click()
+            fleet_view = artifacts / 'fleet-view.html'
+            info.value.save_as(fleet_view)
+            context.route('**/fleet-view.html', lambda r:r.fulfill(path=str(fleet_view),content_type='text/html; charset=utf-8'))
+            fv = context.new_page()
+            fv.goto(url.replace('index.html','fleet-view.html'))
+            fv.locator('#tab-vehicles').click()
+            expect(fv.locator('[data-transport="total"]')).to_have_text('21,950.0元')
+            fv.locator(f'[data-action="edit-vehicle"][data-vehicle="{vehicle_ids[0]}"]').click()
+            assert fv.locator('#expense-dialog input:not(:disabled),#expense-dialog select:not(:disabled)').count() == 0
+            fv.get_by_role('button', name='關閉', exact=True).click()
+            fv.get_by_role('button', name='查看整趟搭車名單', exact=True).click()
+            expect(fv.locator(f'[data-trip-billable="{fd}"]')).to_have_text('0')
+            assert fv.locator('#expense-dialog input:not(:disabled),#expense-dialog select:not(:disabled)').count() == 0
+            fv.close()
+            assert state() == saved_fleet
+            page.set_viewport_size({'width':390,'height':844})
+            assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
+            page.locator(f'[data-action="edit-vehicle"][data-vehicle="{vehicle_ids[2]}"]').click()
+            assert page.locator('#expense-dialog').bounding_box()['width'] == 390
+            page.get_by_role('button', name='取消', exact=True).click()
+            page.screenshot(path=str(artifacts / 'mobile-fleet.png'), full_page=True)
+            page.set_viewport_size({'width':1440,'height':1000})
+            page.locator(f'[data-action="edit-vehicle"][data-vehicle="{vehicle_ids[2]}"]').click()
+            dialog(lambda: page.get_by_role('button', name='刪除此車', exact=True).click(), False)
+            assert state() == saved_fleet
+            dialog(lambda: page.get_by_role('button', name='刪除此車', exact=True).click())
+            expect(page.locator('[data-transport="total"]')).to_have_text('15,900.0元')
+            assert len(state()['vehicles']) == 2 and len(state()['carExpenses']) == 4
+            assert state()['transportRides'] == saved_fleet['transportRides']
+            record('逐車費用與名單在唯讀網頁可查看不能修改；手機可操作，刪車須確認且不影響其他車與名單')
+            dialog(lambda: page.get_by_role('button', name='重設全部', exact=True).click())
 
             # New personal ledger: exercise real purpose, +/- controls and settlement transfers.
             roster()

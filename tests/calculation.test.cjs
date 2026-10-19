@@ -409,3 +409,198 @@ test('實際費用逐筆守恆，加減與收退款另列且資金核對恆等�
   assert.equal(r.people.reduce((n, p) => n + p.pay - p.receive, 0), r.adjusted - r.collected);
   assert.ok(r.expenses.every(e => totalShares(e) === e.units));
 });
+
+function tripCar(s, amount, rides, category = 'fuel', method = 'person-days') {
+  const e = C.tripExpense(category);
+  Object.assign(e, { amount, method, payerId: s.members[0].id, rides: rides.map((participants, i) => ({dayId:s.days[i].id, participantIds:participants.map(n => s.members[n].id)})) });
+  s.carExpenses.push(e);
+  return e;
+}
+function drivenTrip(people = 4, days = 4) {
+  const s = fixture(people, days);
+  s.days.forEach(d => { d.useCar = true; d.drivers = [s.members[0].id]; });
+  return s;
+}
+
+test('整趟車資預設乘車人天；搭4天付400、搭2天付200，司機勾選仍零元', () => {
+  const s = drivenTrip(3, 4), e = tripCar(s, '600', [[0,1,2],[0,1,2],[0,1],[0,1]]);
+  const r = C.calculateTripExpense(s,e);
+  assert.equal(e.method, 'person-days');
+  assert.equal(json(shares(s,r)),json([0,4000,2000]));
+  assert.equal(json(s.members.map(m=>r.billableDays[m.id])),json([0,4,2]));
+  assert.equal(r.days.reduce((n,d)=>n+d.units,0),6000);
+  assert.equal(r.issues.length,0);
+});
+
+test('每日乘客數不同時，人天同價；可明確切換先平均每天作比較', () => {
+  const s = drivenTrip(4,2), e = tripCar(s,'600',[[0,1,2],[0,1,2,3]]);
+  assert.equal(json(shares(s,C.calculateTripExpense(s,e))),json([0,2400,2400,1200]));
+  e.method='day-average';
+  const r=C.calculateTripExpense(s,e);
+  assert.equal(json(shares(s,r)),json([0,2500,2500,1000]));
+  assert.equal(json(r.days.map(d=>d.units)),json([3000,3000]));
+});
+
+test('當日司機輪替只免當日，其他乘車日仍計費；多位司機也逐日排除', () => {
+  const s = drivenTrip(4,2);
+  s.days[1].drivers=[s.members[1].id,s.members[3].id];
+  const e=tripCar(s,'500',[[0,1,2,3],[0,1,2,3]]),r=C.calculateTripExpense(s,e);
+  assert.equal(json(s.members.map(m=>r.billableDays[m.id])),json([1,1,2,1]));
+  assert.equal(json(shares(s,r)),json([1000,1000,2000,1000]));
+  assert.equal(r.days[0].shares[s.members[0].id],0);
+  assert.equal(r.days[1].shares[s.members[1].id],0);
+});
+
+test('整趟尾差以0.1元整數計算，100元3人仍33.4／33.3／33.3', () => {
+  const s=drivenTrip(4,1),e=tripCar(s,'100',[[0,1,2,3]]),r=C.calculateTripExpense(s,e);
+  assert.equal(json(shares(s,r)),json([0,334,333,333]));
+  assert.equal(totalShares(r),1000);
+  const t=drivenTrip(3,2),f=tripCar(t,'100',[[0,1,2],[0,1]]),q=C.calculateTripExpense(t,f);
+  assert.equal(json(shares(t,q)),json([0,667,333]));
+  assert.equal(json(q.days.map(d=>d.units)),json([667,333]));
+  assert.equal(q.days[0].shares[t.members[1].id],334);
+});
+
+test('最後一天加油不歸最後一天；未選日期不影響整趟分攤', () => {
+  const s=drivenTrip(3,4);s.days[3].useCar=false;s.days[3].drivers=[];
+  const e=tripCar(s,'300',[[0,1,2],[0,1,2],[0,1,2]]),r=C.calculateTripExpense(s,e);
+  assert.equal(r.days.length,3);assert.equal(r.issues.length,0);
+  assert.equal(json(shares(s,r)),json([0,1500,1500]));
+  assert.equal(C.summarize(s).people[0].advanced,3000);
+  assert.equal(C.summarize(s).total,3000);
+});
+
+test('整趟費用缺日期、司機、可分攤者或引用未用車日，都明確提示並保留總額', () => {
+  for(const setup of [
+    (s,e)=>{e.rides=[];},
+    (s,e)=>{s.days[0].drivers=[];},
+    (s,e)=>{e.rides[0].participantIds=[s.members[0].id];},
+    (s,e)=>{s.days[0].useCar=false;}
+  ]) {
+    const s=drivenTrip(3,2),e=tripCar(s,'300',[[0,1,2],[0,1,2]]);setup(s,e);
+    const r=C.calculateTripExpense(s,e);
+    assert.ok(r.blocked);assert.ok(r.issues.length);assert.equal(r.units,3000);
+    assert.equal(totalShares(r),0);assert.ok(Object.values(r.shares).every(Number.isFinite));
+    assert.equal(C.summarize(s).difference,3000);
+  }
+});
+
+test('整趟零元、空白與非法金額正確處理；缺代墊者警告但維持分攤', () => {
+  for(const amount of ['', '0']) {
+    const s=drivenTrip(),e=tripCar(s,amount,[]);e.payerId=null;
+    const r=C.calculateTripExpense(s,e);assert.equal(r.issues.length,0);assert.equal(r.allocated,0);
+  }
+  for(const amount of ['-1','1.23','NaN']) {
+    const s=drivenTrip(),e=tripCar(s,amount,[[0,1]]),r=C.calculateTripExpense(s,e);
+    assert.ok(r.blocked);assert.equal(r.allocated,0);assert.ok(r.issues.some(i=>i.code==='invalid-amount'));
+  }
+  const s=drivenTrip(),e=tripCar(s,'100',[[0,1,2]]);e.payerId=null;
+  const r=C.calculateTripExpense(s,e);assert.equal(r.allocated,1000);assert.ok(r.issues.some(i=>i.code==='missing-payer'));
+});
+
+test('空白姓名排除、第30人可跨日計費；改名保留所有搭車紀錄與代墊', () => {
+  const s=drivenTrip(30,2);s.members[1].name=' ';
+  const e=tripCar(s,'300',[[0,1,29],[0,29]]),r=C.calculateTripExpense(s,e);
+  assert.equal(r.shares[s.members[29].id],3000);assert.equal(r.billableDays[s.members[29].id],2);
+  const before=C.summarize(s);s.members[29].name='改名第30人';s.members[0].name='改名司機';
+  const restored=C.decode(C.encode(s)),after=C.summarize(restored);
+  assert.equal(json(restored.carExpenses),json(s.carExpenses));assert.equal(after.people.at(-1).total,before.people.at(-1).total);
+  assert.equal(after.people[0].advanced,3000);
+});
+
+test('多筆油錢和租車費各自只計一次，日費用、個人加購與總覽完全守恆', () => {
+  const s=drivenTrip(4,3);
+  tripCar(s,'3200',[[0,1,2,3],[0,1,2],[0,1]],'fuel');
+  tripCar(s,'18850',[[0,1,2,3],[0,1,2],[0,1]],'rental');
+  fill(s,0,'lunch','100',[0,1,2],0);ledger(s,2,'charge','350',1);
+  const r=C.summarize(s);
+  assert.equal(r.total,225000);assert.equal(r.allocated,r.total);assert.equal(r.issues.length,0);
+  assert.equal(r.people.reduce((n,p)=>n+p.fuel,0),32000);
+  assert.equal(r.people.reduce((n,p)=>n+p.rental,0),188500);
+  assert.equal(r.people.reduce((n,p)=>n+p.advanced,0),r.total);
+  for(const result of r.expenses){assert.equal(totalShares(result),result.units);if(result.days)for(const day of result.days)assert.equal(totalShares(day),day.units);}
+});
+
+test('乘車紀錄日期勾選順序不改變尾差，固定使用名單與日期順序', () => {
+  const s=drivenTrip(4,3),e=tripCar(s,'100',[[0,1,2],[0,2,3],[0,1]]);
+  const before=C.calculateTripExpense(s,e);e.rides.reverse();e.rides.forEach(r=>r.participantIds.reverse());
+  const after=C.calculateTripExpense(s,e);
+  assert.equal(json(after.shares),json(before.shares));assert.equal(json(after.days),json(before.days.map(d=>({...d,participantIds:[...d.participantIds].reverse()}))));
+});
+
+test('舊版version2匯入保留個人紀錄、姓名與每日費用，整趟車資初始化為空', () => {
+  const s=C.example();ledger(s,0,'payment','100');
+  const old=JSON.parse(C.encode(s));old.version=2;delete old.carExpenses;
+  const restored=C.decode(JSON.stringify(old));
+  assert.equal(restored.version,C.VERSION);assert.equal(restored.carExpenses.length,0);
+  assert.equal(json(restored.days),json(s.days));assert.equal(json(restored.ledger),json(s.ledger));
+  assert.equal(json(C.summarize(restored)),json(C.summarize(s)));
+});
+
+test('整趟車資匯入嚴格驗證日期、成員、類別、方法與重複ID；不修改原資料', () => {
+  const s=drivenTrip(),e=tripCar(s,'100',[[0,1,2]]),backup=C.encode(s);
+  for(const mutate of [
+    s=>{s.carExpenses[0].rides[0].dayId='unknown';},
+    s=>{s.carExpenses[0].rides.push(s.carExpenses[0].rides[0]);},
+    s=>{s.carExpenses[0].rides[0].participantIds=['unknown'];},
+    s=>{s.carExpenses[0].payerId='unknown';},
+    s=>{s.carExpenses[0].category='lunch';},
+    s=>{s.carExpenses[0].method='bad';},
+    s=>{s.carExpenses[0].id=s.days[0].expenses[0].id;},
+    s=>{s.carExpenses[0].rides={};},
+    s=>{delete s.carExpenses;}
+  ]) {const bad=JSON.parse(backup);mutate(bad);assert.throws(()=>C.validateState(bad));assert.equal(C.encode(s),backup);}
+});
+
+test('交通自理者即使曾勾搭車也完全不計人天，餐費照算、油錢租金停車皆排除', () => {
+  const s=drivenTrip(4,2);s.members[3].excludeTransport=true;
+  const e=tripCar(s,'300',[[0,1,2,3],[0,1,2,3]]),r=C.calculateTripExpense(s,e);
+  assert.equal(r.billableDays[s.members[3].id],0);assert.equal(r.shares[s.members[3].id],0);
+  assert.equal(json(shares(s,r)),json([0,1500,1500,0]));assert.equal(r.eligible.length,2);
+  for(const category of ['fuel','rental','parking']){
+    const f=fill(s,0,category,'90',[0,1,2,3]);assert.equal(calc(s,0,f).shares[s.members[3].id],0);
+  }
+  const meal=fill(s,0,'dinner','100',[0,1,2,3]);assert.equal(calc(s,0,meal).shares[s.members[3].id],250);
+  assert.equal(C.summarize(s).people[3].total,250);
+});
+
+test('交通自理名單保留原勾選，取消自理後可恢復；第30人也適用', () => {
+  const s=drivenTrip(30,2),e=tripCar(s,'100',[[0,1,29],[0,1,29]]);
+  s.members[29].excludeTransport=true;
+  let r=C.calculateTripExpense(s,e);assert.equal(r.shares[s.members[29].id],0);assert.equal(r.shares[s.members[1].id],1000);
+  const restored=C.decode(C.encode(s));assert.equal(restored.members[29].excludeTransport,true);assert.ok(restored.carExpenses[0].rides[0].participantIds.includes(restored.members[29].id));
+  restored.members[29].excludeTransport=false;r=C.calculateTripExpense(restored,restored.carExpenses[0]);assert.equal(r.shares[restored.members[29].id],500);
+});
+
+test('三台車不同租金18750、油錢3200合計21950，各車資料與代墊固定ID完整保存', () => {
+  const s=drivenTrip(4,4);s.members[3].excludeTransport=true;
+  const rents=['7000','6500','5250'],fuels=['1200','1200','800'];
+  for(let i=0;i<3;i++){
+    const v={id:C.id('v'),name:'車輛'+(i+1)};s.vehicles.push(v);
+    for(const [category,amount] of [['rental',rents[i]],['fuel',fuels[i]]]){
+      const e=tripCar(s,amount,[[0,1,2,3],[0,1,2,3],[0,1,3],[0,1,3]],category);e.vehicleId=v.id;
+    }
+  }
+  s.transportRides=JSON.parse(JSON.stringify(s.carExpenses[0].rides));
+  const summary=C.summarize(s);
+  assert.equal(summary.total,219500);assert.equal(summary.allocated,219500);
+  assert.equal(summary.people.reduce((n,p)=>n+p.rental,0),187500);
+  assert.equal(summary.people.reduce((n,p)=>n+p.fuel,0),32000);
+  assert.equal(summary.people[3].total,0);assert.equal(summary.people[3].advanced,0);
+  assert.equal(summary.people[0].advanced,219500);
+  const restored=C.decode(C.encode(s));assert.equal(json(restored),json(s));
+  restored.vehicles[0].name='改名大車';assert.equal(restored.carExpenses[0].vehicleId,s.vehicles[0].id);assert.equal(C.summarize(restored).total,219500);
+});
+
+test('交通自理型別、未知車輛、重複車輛費用與名單參照錯誤皆拒絕', () => {
+  const s=drivenTrip();const v={id:C.id('v'),name:'大車'};s.vehicles.push(v);
+  const e=tripCar(s,'100',[[0,1]]);e.vehicleId=v.id;s.transportRides=JSON.parse(JSON.stringify(e.rides));
+  const backup=C.encode(s);
+  for(const mutate of [
+    s=>{s.members[0].excludeTransport='yes';},
+    s=>{s.vehicles=null;},s=>{s.vehicles[0].id=s.members[0].id;},
+    s=>{s.carExpenses[0].vehicleId='unknown';},
+    s=>{s.carExpenses.push({...s.carExpenses[0],id:'extra'});},
+    s=>{s.transportRides[0].dayId='unknown';},s=>{s.transportRides[0].participantIds=['unknown'];}
+  ]) {const bad=JSON.parse(backup);mutate(bad);assert.throws(()=>C.validateState(bad));assert.equal(C.encode(s),backup);}
+});

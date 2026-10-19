@@ -35,6 +35,14 @@ const entry=(s,pi,type,amount,payer=null,direction=type==='payment'?'minus':'plu
 s=base();fee(s,0,'dinner','6740',[0],1);entry(s,0,'payment','10000');entry(s,0,'refund','3260');entry(s,0,'charge','350',1);entry(s,1,'adjustment','4000');entry(s,1,'adjustment','6',null,'minus');add('personal_signed_settlement',s);
 s=base();entry(s,0,'charge','100');entry(s,0,'adjustment','-1');entry(s,0,'payment','200');s.members[0].name='';add('personal_blank_names_and_invalid',s);
 s=base();fee(s,0,'other','6280',[0],1);entry(s,0,'adjustment','4000');s.members[0].name='=HYPERLINK(1)';add('personal_literal_purpose_and_name',s);
+const pool=(s,amount,rides,category='fuel',method='person-days')=>{const e=C.tripExpense(category);Object.assign(e,{amount,method,payerId:s.members[0].id,rides:rides.map((parts,i)=>({dayId:s.days[i].id,participantIds:parts.map(n=>s.members[n].id)}))});s.carExpenses.push(e);return e;};
+s=base(3,4);s.days.forEach(d=>{d.useCar=true;d.drivers=[s.members[0].id];});pool(s,'600',[[0,1,2],[0,1,2],[0,1],[0,1]]);pool(s,'1200',[[0,1,2],[0,1,2],[0,1],[0,1]],'rental');add('trip_person_days_four_and_two',s);
+s=base(4,2);s.days.forEach(d=>{d.useCar=true;d.drivers=[s.members[0].id];});s.days[1].drivers=[s.members[1].id,s.members[3].id];pool(s,'100',[[0,1,2,3],[0,1,2,3]]);add('trip_driver_rotation_and_remainder',s);
+s=base(3,2);pool(s,'300',[[0,1,2],[0,1]]);add('trip_no_car_pending',s);
+s=base(4,2);s.days.forEach(d=>{d.useCar=true;d.drivers=[s.members[0].id];});pool(s,'100',[[0,1,2],[0,1,2,3]],'fuel','day-average');add('trip_daily_average_comparison',s);
+s=base(4,4);s.members[3].excludeTransport=true;s.days.forEach(d=>{d.useCar=true;d.drivers=[s.members[0].id];});
+for(let i=0;i<3;i++){const vehicle={id:C.id('v'),name:['大車1','大車2','小車'][i]};s.vehicles.push(vehicle);for(const [category,amount] of [['rental',['7000','6500','5250'][i]],['fuel',['1200','1200','800'][i]]]){const fee=pool(s,amount,[[0,1,2,3],[0,1,2,3],[0,1,3],[0,1,3]],category);fee.vehicleId=vehicle.id;fee.name=vehicle.name+' '+C.CATEGORIES[category];}}
+s.transportRides=JSON.parse(JSON.stringify(s.carExpenses[0].rides));fee(s,0,'dinner','100',[0,1,2,3]);add('three_vehicles_exclude_private_charter',s);
 fs.writeFileSync(output+'/fixtures.json',JSON.stringify(fixtures));
 '''
 
@@ -114,6 +122,40 @@ def main():
         for i,a in enumerate(summary['advances'],4):
             assert advance.cell(i,2).value==a['label']
             assert units(advance.cell(i,3).value)==a['units']
+        pool_sheet=wb['整趟車資'];daily_pool=wb['車資逐日核對']
+        assert pool_sheet.max_row==3+len(s['carExpenses'])
+        cursor=4
+        for ei,e in enumerate(s['carExpenses'],4):
+            result=next(r for r in summary['expenses'] if r['expenseId']==e['id'])
+            assert pool_sheet.cell(ei,1).value==e['name']
+            assert units(pool_sheet.cell(ei,4).value)==result['units']
+            member_sums={m['id']:0 for m in named}
+            for day in result['days']:
+                for m in named:
+                    row=list(daily_pool.iter_rows(min_row=cursor,max_row=cursor,values_only=True))[0]
+                    assert row[0]==e['name'] and row[2]==day['dayName'] and row[4]==m['name']
+                    assert units(row[3])==day['units']
+                    assert row[5]==('是' if m['id'] in day['participantIds'] else '否')
+                    assert row[6]==('是' if m['id'] in day['driverIds'] else '否')
+                    assert units(row[7])==day['shares'][m['id']]
+                    assert row[8]==result['billableDays'][m['id']]
+                    assert units(row[9])==result['shares'][m['id']]
+                    member_sums[m['id']]+=units(row[7]);cursor+=1
+            assert sum(member_sums.values())==result['allocated']
+        assert daily_pool.max_row==max(3,cursor-1)
+        fleet=wb['各車交通費']
+        for vi,v in enumerate(s['vehicles'],4):
+            assert fleet.cell(vi,1).value==v['name']
+            rent=sum(r['units'] for r in summary['expenses'] if any(e['id']==r['expenseId'] and e['vehicleId']==v['id'] and e['category']=='rental' for e in s['carExpenses']))
+            gas=sum(r['units'] for r in summary['expenses'] if any(e['id']==r['expenseId'] and e['vehicleId']==v['id'] and e['category']=='fuel' for e in s['carExpenses']))
+            assert units(fleet.cell(vi,2).value)==rent
+            assert units(fleet.cell(vi,3).value)==gas
+            assert units(fleet.cell(vi,4).value)==rent+gas
+        if f['name']=='three_vehicles_exclude_private_charter':
+            assert fleet['D7'].value==21950
+            assert ov['B10'].value==25 and ov['C10'].value==0 and ov['D10'].value==0
+            excluded_rows=[row for row in daily_pool.iter_rows(min_row=4,values_only=True) if row[4]==s['members'][3]['name']]
+            assert excluded_rows and all(row[8]==0 and row[7]==0 and row[11]=='是' for row in excluded_rows)
         if f['name']=='safe_text_and_sheet_names':
             assert ov['A7'].value=='=SUM(1,2)' and ov['A7'].data_type=='s'
         print('PASS:',f['name'],flush=True)

@@ -50,7 +50,9 @@ h3{font-size:16px}
 .roster-content{border-top:1px solid var(--line);padding:18px 20px}
 .roster-head{display:flex;gap:12px;justify-content:space-between;align-items:center;margin-bottom:15px}
 .roster-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:9px}
-.person-editor{display:flex;gap:7px;align-items:center}
+.person-editor{display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:4px 7px;align-items:center}
+.transport-exclusion{grid-column:2/-1;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);margin-bottom:5px}
+.transport-exclusion input[type=checkbox]{width:15px;height:15px}
 .person-number{width:24px;text-align:right;color:var(--muted);font-size:12px}
 .person-editor input{width:100%}
 .person-editor .remove{padding:5px 9px}
@@ -129,6 +131,15 @@ thead .driver-cell{z-index:5;background:#eae6dc}
 .dialog-participants{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:9px;margin-top:14px}
 .dialog-person{display:flex;align-items:center;gap:10px;background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:11px 12px}
 .dialog-person .money{margin-left:auto}
+.trip-date-choices{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 18px}
+.trip-date-choice{display:flex;gap:7px;align-items:center;padding:7px 10px;background:var(--paper);border:1px solid var(--line);border-radius:8px}
+.trip-rides-scroll{overflow:auto;max-height:44vh;border:1px solid var(--line);border-radius:10px;margin-top:14px}
+.trip-rides-scroll .name-cell{min-width:140px;width:140px;max-width:140px}
+.trip-day-head{min-width:150px;text-align:left}
+.trip-day-name{display:block;max-width:130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trip-costs-table{min-width:850px}
+.trip-costs-table td:first-child{text-align:left}
+.trip-empty{padding:26px 20px;background:var(--paper);border:1px dashed #c9bfae;border-radius:12px;margin-bottom:20px}
 @media(max-width:600px){.expense-dialog{width:100%;height:100dvh;max-height:100dvh;margin:0;border:0;border-radius:0}.dialog-head,.dialog-footer{padding:14px 16px}.dialog-body{padding:18px 16px}.expense-form{grid-template-columns:1fr;gap:14px}.dialog-participants{grid-template-columns:1fr}}
 .expense-status{font-size:11px;color:var(--red);margin-top:6px;font-weight:400;max-width:214px}
 .expense-status:empty{display:none}
@@ -222,12 +233,13 @@ body{background:white}
 <script id="trip-core">
 'use strict';
 const TripCore = (() => {
-  const VERSION = 2;
+  const VERSION = 3;
   const LIMITS = Object.freeze({members:200, days:100, expenses:100, ledger:5000, units:1000000000});
   const CATEGORIES = Object.freeze({breakfast:'早餐', lunch:'午餐', dinner:'晚餐', fuel:'油錢', rental:'租車費', parking:'停車費', other:'其他'});
   const LEDGER_TYPES = Object.freeze({adjustment:'其他用途／調整',charge:'個人加購',payment:'已繳款',refund:'已退款'});
   const isNamed = m => m.name.trim().length > 0;
   const isCar = e => e.category === 'fuel' || e.category === 'rental';
+  const isTransport=e=>isCar(e)||e.category==='parking';
   const id = prefix => prefix + '_' + (globalThis.crypto?.randomUUID?.() || Date.now().toString(36) + Math.random().toString(36).slice(2));
   function expense(category='other') {
     return {id:id('e'), name:CATEGORIES[category], category, amount:'', payerId:null, participantIds:[]};
@@ -235,10 +247,11 @@ const TripCore = (() => {
   function day(number=1) {
     return {id:id('d'), name:`第 ${number} 天`, useCar:false, drivers:[], expenses:Object.keys(CATEGORIES).map(expense)};
   }
+  function tripExpense(category='fuel') {return {id:id('t'),name:CATEGORIES[category],category,amount:'',payerId:null,method:'person-days',vehicleId:null,rides:[]};}
   function ledgerEntry(personId) {return {id:id('l'),personId,type:'adjustment',direction:'plus',description:'',amount:'',payerId:null};}
   function createTrip(people=30, days=10) {
     if (!Number.isInteger(people) || people < 1 || people > LIMITS.members || !Number.isInteger(days) || days < 1 || days > LIMITS.days) throw new Error('人數或天數超過範圍');
-    return {version:VERSION, members:Array.from({length:people},()=>({id:id('p'), name:''})), days:Array.from({length:days},(_,i)=>day(i+1)),ledger:[]};
+    return {version:VERSION, members:Array.from({length:people},()=>({id:id('p'), name:'',excludeTransport:false})), days:Array.from({length:days},(_,i)=>day(i+1)),ledger:[],carExpenses:[],vehicles:[],transportRides:[]};
   }
   function parseAmount(raw) {
     if (typeof raw !== 'string') return {ok:false, units:0};
@@ -261,7 +274,7 @@ const TripCore = (() => {
     const parsed = parseAmount(e.amount), issues = [];
     const driverIds = new Set(d.useCar ? d.drivers.filter(pid=>state.members.some(m=>m.id===pid && isNamed(m))) : []);
     const participants = new Set(e.participantIds);
-    let eligible = state.members.filter(m=>isNamed(m) && participants.has(m.id) && !(isCar(e) && driverIds.has(m.id))).map(m=>m.id);
+    let eligible = state.members.filter(m=>isNamed(m) && participants.has(m.id) && !(isTransport(e)&&m.excludeTransport) && !(isCar(e) && driverIds.has(m.id))).map(m=>m.id);
     let blocked = !parsed.ok;
     const issue = (code,message,blocks=false) => {issues.push({code,message}); if (blocks) blocked = true;};
     if (!parsed.ok) issue('invalid-amount','金額須為非負數、最多一位小數，且不超過 100,000,000 元。',true);
@@ -280,6 +293,42 @@ const TripCore = (() => {
     const allocated = Object.values(shares).reduce((a,b)=>a+b,0);
     return {units:parsed.units, amountValid:parsed.ok, eligible, shares, allocated, blocked, issues};
   }
+  function splitWeighted(units,entries) {
+    if(!Number.isSafeInteger(units)||units<0||units>LIMITS.units||new Set(entries.map(e=>e.id)).size!==entries.length||entries.some(e=>!Number.isInteger(e.weight)||e.weight<1||e.weight>LIMITS.days))throw new Error('權重分攤輸入不合法');
+    const result=Object.create(null),weight=entries.reduce((n,e)=>n+e.weight,0);if(!weight)return result;
+    let remaining=units;for(const entry of entries){const value=Math.floor(units*entry.weight/weight);result[entry.id]=value;remaining-=value;}
+    for(let i=0;i<remaining;i++)result[entries[i].id]+=1;
+    return result;
+  }
+  function calculateTripExpense(state,e) {
+    const parsed=parseAmount(e.amount),issues=[],shares=Object.fromEntries(state.members.map(m=>[m.id,0])),billableDays=Object.fromEntries(state.members.map(m=>[m.id,0]));
+    let blocked=!parsed.ok;
+    const issue=(code,message)=>{issues.push({code,message});blocked=true;};
+    if(!parsed.ok)issue('invalid-amount','金額須為非負數、最多一位小數，且不超過 100,000,000 元。');
+    const selected=state.days.filter(d=>e.rides.some(ride=>ride.dayId===d.id)),dailyAmounts=split(parsed.units,selected.map(d=>d.id));
+    if(parsed.units>0&&!selected.length)issue('no-ride-days','請選擇要平均分攤的用車日期。');
+    const days=selected.map(d=>{
+      const ride=e.rides.find(ride=>ride.dayId===d.id),drivers=new Set(d.drivers.filter(pid=>state.members.some(m=>m.id===pid&&isNamed(m))));
+      const eligible=state.members.filter(m=>isNamed(m)&&!m.excludeTransport&&d.useCar&&ride.participantIds.includes(m.id)&&!drivers.has(m.id)).map(m=>m.id);
+      const units=dailyAmounts[d.id];
+      if(parsed.units>0&&!d.useCar)issue('no-car',`${d.name||'未命名日期'}：已列入整趟車資，但此日未用車。請啟用用車或取消此日期。`);
+      if(parsed.units>0&&d.useCar&&!drivers.size)issue('missing-driver',`${d.name||'未命名日期'}：尚未設定具名司機，請到每日明細補齊。`);
+      if(parsed.units>0&&d.useCar&&!eligible.length)issue('no-participants',`${d.name||'未命名日期'}：正金額沒有可分攤乘客，請勾選具名乘客；當日司機免付。`);
+      eligible.forEach(pid=>billableDays[pid]+=1);
+      return {dayId:d.id,dayName:d.name,units,eligible,participantIds:[...ride.participantIds],driverIds:[...drivers],shares:Object.fromEntries(state.members.map(m=>[m.id,0])),allocated:0};
+    });
+    if(parsed.units>0&&!state.members.some(m=>m.id===e.payerId&&isNamed(m)))issues.push({code:'missing-payer',message:'尚未指定具名代墊者，請補齊以完成收付款核對。'});
+    if(e.method==='person-days') {
+      days.forEach(day=>day.units=0);
+      if(!blocked){
+        const entries=state.members.filter(m=>billableDays[m.id]>0).map(m=>({id:m.id,weight:billableDays[m.id]}));Object.assign(shares,splitWeighted(parsed.units,entries));
+        for(const entry of entries){const selected=days.filter(day=>day.eligible.includes(entry.id)),parts=split(shares[entry.id],selected.map(day=>day.dayId));for(const day of selected)day.shares[entry.id]=parts[day.dayId];}
+        days.forEach(day=>{day.units=Object.values(day.shares).reduce((n,v)=>n+v,0);day.allocated=day.units;});
+      }
+    } else if(!blocked)for(const day of days){Object.assign(day.shares,split(day.units,day.eligible));day.allocated=Object.values(day.shares).reduce((n,v)=>n+v,0);for(const m of state.members)shares[m.id]+=day.shares[m.id];}
+    const eligible=state.members.filter(m=>billableDays[m.id]>0).map(m=>m.id),allocated=Object.values(shares).reduce((n,v)=>n+v,0);
+    return {units:parsed.units,amountValid:parsed.ok,eligible,shares,allocated,blocked,issues,days,billableDays,method:e.method};
+  }
   function summarize(state) {
     const people = state.members.filter(isNamed).map(m=>({id:m.id,name:m.name,meals:0,fuel:0,rental:0,other:0,personal:0,adjustment:0,total:0,advanced:0,paid:0,refunded:0,pay:0,receive:0}));
     const peopleById = new Map(people.map(p=>[p.id,p]));
@@ -294,6 +343,15 @@ const TripCore = (() => {
       for (const p of people) {p[bucket]+=result.shares[p.id]; p.total+=result.shares[p.id];}
       for (const issue of result.issues) issues.push({...issue,dayId:d.id,expenseId:e.id,dayName:d.name,expenseName:e.name});
       expenses.push({dayId:d.id,expenseId:e.id,...result});
+    }
+    for(const e of state.carExpenses||[]) {
+      const result=calculateTripExpense(state,e);total+=result.units;allocated+=result.allocated;
+      const payer=peopleById.get(e.payerId);
+      if(payer){payer.advanced+=result.units;if(result.units)advances.push({personId:payer.id,dayId:'vehicles',expenseId:e.id,label:'整趟車資 · '+(e.name||'未命名費用'),units:result.units});}else unassignedAdvance+=result.units;
+      const bucket=e.category==='fuel'?'fuel':'rental';
+      for(const p of people){p[bucket]+=result.shares[p.id];p.total+=result.shares[p.id];}
+      result.issues.forEach(issue=>issues.push({...issue,dayId:'vehicles',expenseId:e.id,dayName:'整趟車資',expenseName:e.name}));
+      expenses.push({dayId:'vehicles',expenseId:e.id,...result});
     }
     for(const entry of state.ledger||[]) {
       const parsed=parseAmount(entry.amount),person=peopleById.get(entry.personId),payer=peopleById.get(entry.payerId),entryIssues=[];
@@ -323,9 +381,9 @@ const TripCore = (() => {
     const text=(s,max,label)=>{if(typeof s!=='string'||s.length>max)fail(`${label}格式錯誤`); return s;};
     const ids = new Set();
     const readId=x=>{if(typeof x!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(x)||ids.has(x))fail('ID 格式錯誤或重複'); ids.add(x);return x;};
-    if(!object(input)||![1,VERSION].includes(input.version))fail('不支援的備份版本');
+    if(!object(input)||![1,2,VERSION].includes(input.version))fail('不支援的備份版本');
     if(!Array.isArray(input.members)||input.members.length<1||input.members.length>LIMITS.members)fail('名單須有 1–200 個名額');
-    const members=input.members.map(m=>{if(!object(m))fail('成員格式錯誤');return {id:readId(m.id),name:text(m.name,80,'姓名')};});
+    const members=input.members.map(m=>{if(!object(m))fail('成員格式錯誤');if(m.excludeTransport!==undefined&&typeof m.excludeTransport!=='boolean')fail('交通自理設定格式錯誤');return {id:readId(m.id),name:text(m.name,80,'姓名'),excludeTransport:m.excludeTransport??false};});
     const memberIds=new Set(members.map(m=>m.id));
     function references(list) {
       if(!Array.isArray(list)||list.length>members.length||new Set(list).size!==list.length||list.some(x=>!memberIds.has(x)))fail('參與者或司機參照錯誤');
@@ -352,7 +410,27 @@ const TripCore = (() => {
       if(!['plus','minus'].includes(direction)||entry.type!=='adjustment'&&direction!==(entry.type==='payment'?'minus':'plus'))fail('個人紀錄正負方向錯誤');
       return {id:readId(entry.id),personId:entry.personId,type:entry.type,direction,description:text(entry.description,160,'個人紀錄說明'),amount:text(entry.amount,32,'個人紀錄金額'),payerId:entry.payerId};
     });
-    return {version:VERSION,members,days,ledger};
+    const rawVehicles=input.vehicles===undefined?[]:input.vehicles;
+    if(!Array.isArray(rawVehicles)||rawVehicles.length>50)fail('車輛須為陣列且最多50台');
+    const vehicles=rawVehicles.map(v=>{if(!object(v))fail('車輛格式錯誤');return {id:readId(v.id),name:text(v.name,80,'車輛名稱')};});
+    const vehicleIds=new Set(vehicles.map(v=>v.id));
+    const rawCars=input.carExpenses===undefined&&input.version<3?[]:input.carExpenses;
+    if(!Array.isArray(rawCars)||rawCars.length>LIMITS.expenses)fail('整趟車資須為陣列且最多 100 筆');
+    const dayIds=new Set(days.map(d=>d.id));
+    const carExpenses=rawCars.map(e=>{
+      if(!object(e)||!isCar(e)||!['person-days','day-average'].includes(e.method)||e.payerId!==null&&!memberIds.has(e.payerId)||!Array.isArray(e.rides)||e.rides.length>days.length)fail('整趟車資格式錯誤');
+      if(e.vehicleId!==undefined&&e.vehicleId!==null&&!vehicleIds.has(e.vehicleId))fail('車輛參照錯誤');
+      const selected=new Set();
+      const rides=e.rides.map(ride=>{if(!object(ride)||!dayIds.has(ride.dayId)||selected.has(ride.dayId))fail('整趟車資日期參照錯誤或重複');selected.add(ride.dayId);return {dayId:ride.dayId,participantIds:references(ride.participantIds)};});
+      return {id:readId(e.id),name:text(e.name,80,'整趟車資名稱'),category:e.category,amount:text(e.amount,32,'整趟車資金額'),payerId:e.payerId,method:e.method,vehicleId:e.vehicleId??null,rides};
+    });
+    const vehicleFees=new Set();
+    for(const e of carExpenses)if(e.vehicleId){const key=e.vehicleId+':'+e.category;if(vehicleFees.has(key))fail('每台車的租金或油錢紀錄重複');vehicleFees.add(key);}
+    const rawPlan=input.transportRides===undefined?[]:input.transportRides;
+    if(!Array.isArray(rawPlan)||rawPlan.length>days.length)fail('整趟搭車名單格式錯誤');
+    const planDays=new Set();
+    const transportRides=rawPlan.map(ride=>{if(!object(ride)||!dayIds.has(ride.dayId)||planDays.has(ride.dayId))fail('搭車名單日期參照錯誤或重複');planDays.add(ride.dayId);return {dayId:ride.dayId,participantIds:references(ride.participantIds)};});
+    return {version:VERSION,members,days,ledger,carExpenses,vehicles,transportRides};
   }
   function encode(state) {return JSON.stringify(validateState(state),null,2);}
   function decode(raw) {
@@ -371,7 +449,7 @@ const TripCore = (() => {
     set(1,'breakfast','100',p.slice(1),p[1]);set(1,'fuel','240',p,p[1]);set(1,'other','200',p,p[3]);
     return s;
   }
-  return Object.freeze({VERSION,LIMITS,CATEGORIES,LEDGER_TYPES,isNamed,isCar,id,expense,day,ledgerEntry,createTrip,parseAmount,split,calculateExpense,summarize,validateState,encode,decode,example});
+  return Object.freeze({VERSION,LIMITS,CATEGORIES,LEDGER_TYPES,isNamed,isCar,isTransport,id,expense,tripExpense,day,ledgerEntry,createTrip,parseAmount,split,splitWeighted,calculateExpense,calculateTripExpense,summarize,validateState,encode,decode,example});
 })();
 globalThis.TripCore=TripCore;
 </script>
@@ -399,7 +477,7 @@ const TripExport = (() => {
   }
   function report(state,now=new Date()) {
     state=TripCore.validateState(state);
-    const summary=TripCore.summarize(state),named=state.members.filter(TripCore.isNamed),used=new Set(['整趟總覽','每餐參與名單','個人紀錄','代墊明細','待處理項目','使用說明'].map(x=>x.toLowerCase()));
+    const summary=TripCore.summarize(state),named=state.members.filter(TripCore.isNamed),used=new Set(['整趟總覽','每餐參與名單','個人紀錄','代墊明細','整趟車資','車資逐日核對','各車交通費','待處理項目','使用說明'].map(x=>x.toLowerCase()));
     const columns=[['meals','餐費合計'],['fuel','油錢合計'],['rental','租車費合計'],['other','其他費用合計'],['personal','個人加購'],['adjustment','其他加減'],['total','總應負擔'],['advanced','已代墊'],['paid','已繳款'],['refunded','已退款'],['pay','還要付'],['receive','應收回']];
     const overview={name:'整趟總覽',freezeRows:6,freezeColumns:1,widths:[22,17,17,17,19,17,17,17,17,17,17,17,17],merges:['A1:M1','B2:M2','A4:M4','A5:M5'],rows:[
       [cell('旅伴帳本｜整趟總覽',3)],textRow('匯出時間（台北）',stamp(now)),
@@ -456,13 +534,43 @@ const TripExport = (() => {
       const label=day.name.trim()===('第 '+(index+1)+' 天')?day.name:'第 '+(index+1)+' 天｜'+(day.name||'每日明細');
       return {name:sheetName(label,used),freezeRows:12,freezeColumns:2,widths:[22,23,...day.expenses.flatMap(()=>[23,18]),20,20],merges,rows};
     });
+    const fleet={name:'各車交通費',freezeRows:3,freezeColumns:1,widths:[25,22,22,22,24,24,65],merges:['A1:G1','A2:G2'],rows:[
+      [cell('各車交通費｜每台車租金與油錢分列',3)],textRow('只含本團共同分攤車輛；自付包車費不登錄。交通自理者不計乘車人天，餐費獨立勾選。'),
+      header(['車輛','租車費（元）','油錢（元）','該車合計（元）','租金代墊者','油錢代墊者','待處理提醒'])
+    ]};
+    let fleetRent=0,fleetFuel=0;
+    state.vehicles.forEach(v=>{
+      const rental=state.carExpenses.find(e=>e.vehicleId===v.id&&e.category==='rental'),fuel=state.carExpenses.find(e=>e.vehicleId===v.id&&e.category==='fuel');
+      const rent=rental?TripCore.calculateTripExpense(state,rental):null,gas=fuel?TripCore.calculateTripExpense(state,fuel):null;
+      const rentalUnits=rent?.units||0,fuelUnits=gas?.units||0;fleetRent+=rentalUnits;fleetFuel+=fuelUnits;
+      const issues=[...(rent?.issues||[]),...(gas?.issues||[])];
+      fleet.rows.push([cell(v.name),rent&&!rent.amountValid?cell('待修正：'+rental.amount,7):yuan(rentalUnits),gas&&!gas.amountValid?cell('待修正：'+fuel.amount,7):yuan(fuelUnits),yuan(rentalUnits+fuelUnits),cell(rental?.payerId?name(rental.payerId):'未指定'),cell(fuel?.payerId?name(fuel.payerId):'未指定'),cell([...new Set(issues.map(i=>i.message))].join('；'),issues.length?7:0)]);
+    });
+    fleet.rows.push([cell('各車合計',2),cell(fleetRent/10,6),cell(fleetFuel/10,6),cell((fleetRent+fleetFuel)/10,6)]);
+    const cars={name:'整趟車資',freezeRows:3,freezeColumns:1,widths:[25,16,27,22,24,53,65],merges:['A1:G1','A2:G2'],rows:[
+      [cell('整趟油錢與租車費',3)],textRow('預設按乘車人天分攤；當司機的日期不計費。每筆費用只計一次，不重複加到每日支出。'),
+      header(['費用名稱','類別','分攤方式','總額（元）','代墊者','涵蓋日期','待處理提醒'])
+    ]};
+    const carDays={name:'車資逐日核對',freezeRows:3,freezeColumns:3,widths:[25,27,24,23,23,17,18,23,22,24,65,22],merges:['A1:L1','A2:L2'],rows:[
+      [cell('整趟車資｜乘車紀錄與逐日分配核對',3)],textRow('乘車人天按整趟計費天數分攤；下列每日分配是核對用，並非當日實際耗油。當司機日不計費。'),
+      header(['費用名稱','分攤方式','日期','此日分配合計（元）','姓名','有搭車','當日司機','個人本日分攤（元）','本筆計費天數','個人本筆合計（元）','待處理提醒','交通自理（不計費）'])
+    ]};
+    state.carExpenses.forEach(e=>{
+      const r=TripCore.calculateTripExpense(state,e),method=e.method==='person-days'?'依乘車人天':'先平均每天';
+      cars.rows.push([cell(e.name),cell(TripCore.CATEGORIES[e.category]),cell(method),r.amountValid?yuan(r.units):cell('待修正：'+e.amount,7),cell(e.payerId?name(e.payerId):'未指定'),cell(r.days.map(day=>day.dayName).join('、')||'未選日期'),cell(r.issues.map(i=>i.message).join('；'),r.issues.length?7:0)]);
+      for(const day of r.days)for(const member of named)carDays.rows.push([
+        cell(e.name),cell(method),cell(day.dayName),yuan(day.units),cell(member.name),cell(day.participantIds.includes(member.id)?'是':'否'),cell(day.driverIds.includes(member.id)?'是':'否'),yuan(day.shares[member.id]),cell(r.billableDays[member.id]),yuan(r.shares[member.id]),cell(r.issues.map(i=>i.message).join('；'),r.issues.length?7:0),cell(member.excludeTransport?'是':'否')
+      ]);
+    });
     const instructions={name:'使用說明',widths:[26,105],merges:['A1:B1'],rows:[
       [cell('HTML 記帳 → 試算表分享',3)],textRow('報表更新時間（台北）',stamp(now)),
       textRow('資料來源','所有分攤已在原 HTML 帳本計算完成。本報表保存本次結果，不含需要啟用的程式或公式。'),
       textRow('餐費','每天的早餐、午餐、晚餐，以及同類的多筆餐費，各自勾選參與者。沒吃不勾，不分攤該筆。'),
+      textRow('交通自理','統一名單標記交通自理者，即使原來勾選搭車，也不計乘車人天、油錢、租金與停車費；餐費仍各餐勾選。'),
+      textRow('整趟車資','總油錢與租車費可按乘車人天分攤。搭4天為搭2天的兩倍，當司機的日期不計費。逐日分配為核對用，並非每日實際耗油。'),
       textRow('每日司機','每日獨立設定。司機有勾選餐費、停車費及其他費用時，照常分攤；只免當日油錢及租車費。'),
       textRow('尾差','所有費用以 0.1 元整數計算，尾差依名單固定順序分配。'),
-      textRow('輸出內容','整趟總覽、每餐參與名單、每一天的明細、個人紀錄、代墊明細，以及待處理項目。空白姓名不列入總覽成員；個人紀錄仍保留並提示。'),
+      textRow('輸出內容','整趟總覽、每餐參與名單、每一天的明細、整趟車資與車資逐日核對、個人紀錄、代墊明細，以及待處理項目。空白姓名不列入總覽成員；個人紀錄仍保留並提示。'),
       textRow('個人結算','用途、金額及正負分開記錄。其他調整只改變應付，不列實際支出；真正加購選個人加購並指定代墊者。'),
       textRow('收退款','還要付＝總應負擔－已代墊－已繳款＋已退款，負數改列應收回。已退款是在款項實際退回後登錄。'),
       textRow('收款核對','主辦人已收款淨額 '+(summary.collected/10).toFixed(1)+' 元；其他用途加減淨額 '+(summary.adjusted/10).toFixed(1)+' 元。已繳款與退款不增加旅程支出。'),
@@ -471,7 +579,7 @@ const TripExport = (() => {
       textRow('資料備份','本報表是分享用快照，不能還原完整帳本；請另外在 HTML 匯出 JSON 備份。'),
       textRow('提醒','報表內的「參與／未參與」是記錄結果；實際勾選請回到 HTML。尚有待處理項目時請先修正再結算。')
     ]};
-    return [overview,meals,...days,personal,advances,pending,instructions];
+    return [overview,meals,...days,fleet,cars,carDays,personal,advances,pending,instructions];
   }
   const crcTable=Uint32Array.from({length:256},(_,i)=>{let c=i;for(let b=0;b<8;b++)c=(c&1)?0xedb88320^(c>>>1):c>>>1;return c>>>0;});
   function crc32(data){let crc=0xffffffff;for(const byte of data)crc=crcTable[(crc^byte)&255]^(crc>>>8);return (crc^0xffffffff)>>>0;}
@@ -532,7 +640,7 @@ globalThis.TripExport=TripExport;
   const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const money=units=>(units/10).toLocaleString('zh-TW',{minimumFractionDigits:1,maximumFractionDigits:1});
   const snapshotElement=$('trip-snapshot'), readOnly=Boolean(snapshotElement);
-  let state=C.createTrip(), active='overview', storageOk=true, initialMessage='', snapshotTime='', selectedPerson='', expenseEditor=null;
+  let state=C.createTrip(), active='overview', storageOk=true, initialMessage='', snapshotTime='', selectedPerson='', expenseEditor=null, vehicleEditor=null;
   if(readOnly) {
     try {
       const snapshot=JSON.parse(snapshotElement.textContent);
@@ -553,7 +661,7 @@ globalThis.TripExport=TripExport;
       }
     }
     const selected=localStorage.getItem(TAB);
-    if(['overview','personal'].includes(selected)||state.days.some(d=>d.id===selected))active=selected;
+    if(['overview','vehicles','personal'].includes(selected)||state.days.some(d=>d.id===selected))active=selected;
   } catch {storageOk=false;initialMessage='瀏覽器儲存空間不可用。仍可操作，但請匯出 JSON 備份，重新整理可能無法保留資料。';}
   function notify(message) {$('flash').textContent=message;}
   function save() {
@@ -566,10 +674,10 @@ globalThis.TripExport=TripExport;
   function renderRoster() {
     const count=state.members.filter(C.isNamed).length;
     $('roster-summary').textContent=`統一名單　${count} 位已填姓名 / ${state.members.length} 個名額`;
-    $('roster-content').innerHTML=`<div class="roster-head"><p class="muted tiny">姓名在此統一修改，所有日期同步。空白姓名不分攤，既有勾選仍保留。</p><button type="button" data-action="add-member" ${state.members.length>=C.LIMITS.members?'disabled':''}>＋ 新增成員</button></div><div class="roster-grid">${state.members.map((m,i)=>`<div class="person-editor"><span class="person-number">${i+1}</span><label class="sr-only" for="name-${m.id}">成員 ${i+1} 姓名</label><input id="name-${m.id}" data-field="member-name" data-person="${m.id}" maxlength="80" placeholder="輸入姓名" value="${esc(m.name)}" autocomplete="off"><button type="button" class="remove danger" data-action="delete-member" data-person="${m.id}" aria-label="刪除成員 ${i+1}" ${state.members.length===1?'disabled':''}>×</button></div>`).join('')}</div>`;
+    $('roster-content').innerHTML=`<div class="roster-head"><p class="muted tiny">姓名在此統一修改，所有日期同步。空白姓名不分攤，既有勾選仍保留。</p><button type="button" data-action="add-member" ${state.members.length>=C.LIMITS.members?'disabled':''}>＋ 新增成員</button></div><div class="roster-grid">${state.members.map((m,i)=>`<div class="person-editor"><span class="person-number">${i+1}</span><label class="sr-only" for="name-${m.id}">成員 ${i+1} 姓名</label><input id="name-${m.id}" data-field="member-name" data-person="${m.id}" maxlength="80" placeholder="輸入姓名" value="${esc(m.name)}" autocomplete="off"><button type="button" class="remove danger" data-action="delete-member" data-person="${m.id}" aria-label="刪除成員 ${i+1}" ${state.members.length===1?'disabled':''}>×</button><label class="transport-exclusion"><input type="checkbox" data-field="exclude-transport" data-person="${m.id}" aria-label="${esc(memberName(m))} 交通自理" ${m.excludeTransport?'checked':''}>交通自理／不分攤本團車資</label></div>`).join('')}</div>`;
   }
   function renderTabs() {
-    $('tabs').innerHTML=[{id:'overview',name:'整趟總覽'},{id:'personal',name:'個人結算'},...state.days].map(d=>`<button type="button" class="tab" id="tab-${d.id}" role="tab" aria-selected="${active===d.id}" aria-controls="view" tabindex="${active===d.id?'0':'-1'}" data-action="tab" data-tab="${d.id}">${esc(d.name||'未命名日期')}</button>`).join('');
+    $('tabs').innerHTML=[{id:'overview',name:'整趟總覽'},{id:'vehicles',name:'交通費用'},{id:'personal',name:'個人結算'},...state.days].map(d=>`<button type="button" class="tab" id="tab-${d.id}" role="tab" aria-selected="${active===d.id}" aria-controls="view" tabindex="${active===d.id?'0':'-1'}" data-action="tab" data-tab="${d.id}">${esc(d.name||'未命名日期')}</button>`).join('');
     $('view').setAttribute('aria-labelledby','tab-'+active);
     document.querySelector('[data-action="add-day"]').disabled=state.days.length>=C.LIMITS.days;
   }
@@ -617,72 +725,129 @@ globalThis.TripExport=TripExport;
   }
   function closeExpense() {
     if($('expense-dialog').open)$('expense-dialog').close();
-    expenseEditor=null;
+    expenseEditor=null;vehicleEditor=null;
     $('expense-dialog').replaceChildren();
   }
-  function openExpense(dayId,expenseId) {
-    const d=state.days.find(d=>d.id===dayId);if(!d)return;
+  function openVehicle(vehicleId=null) {
+    const original=state.vehicles.find(v=>v.id===vehicleId);if(vehicleId&&!original||!original&&(readOnly||state.vehicles.length>=50||state.carExpenses.length>98))return;
+    const vehicle=original?{...original}:{id:C.id('v'),name:'第 '+(state.vehicles.length+1)+' 台車'};
+    const rides=state.transportRides.length?state.transportRides:state.carExpenses[0]?.rides||state.days.filter(day=>day.useCar).map(day=>({dayId:day.id,participantIds:[]}));
+    const costs={};for(const category of ['rental','fuel']){const existing=state.carExpenses.find(e=>e.vehicleId===vehicle.id&&e.category===category);costs[category]=existing?JSON.parse(JSON.stringify(existing)):{...C.tripExpense(category),vehicleId:vehicle.id,rides:JSON.parse(JSON.stringify(rides))};}
+    expenseEditor=null;vehicleEditor={vehicle,costs,isNew:!original};
+    const dialog=$('expense-dialog');dialog.dataset.vehicle=vehicle.id;
+    dialog.innerHTML=`<header class="dialog-head"><h2 id="expense-dialog-title">${readOnly?'查看車輛':'編輯車輛'}</h2><p class="muted tiny">逐台填租金、油錢及代墊者；搭車名單在交通費用區統一設定。</p></header><div class="dialog-body"><div class="expense-form"><label class="wide">車輛名稱<input id="vehicle-name" data-field="vehicle-name" maxlength="80" aria-label="車輛名稱" value="${esc(vehicle.name)}"></label>${['rental','fuel'].map(category=>`<label>${C.CATEGORIES[category]}（元）<input id="vehicle-${category}-amount" data-field="vehicle-cost" data-category="${category}" maxlength="32" inputmode="decimal" aria-label="車輛${C.CATEGORIES[category]}" value="${esc(costs[category].amount)}" placeholder="0.0"></label><label>${C.CATEGORIES[category]}代墊者<select id="vehicle-${category}-payer" data-field="vehicle-payer" data-category="${category}" aria-label="車輛${C.CATEGORIES[category]}代墊者">${payerOptions(costs[category])}</select></label>`).join('')}</div><div class="dialog-preview" id="vehicle-preview" role="status"></div><p class="muted tiny">只填本團共同分攤的車輛。交通自理者自己支付的包車費不登錄本區。同一筆費用也不要重複填入每日明細。</p></div><footer class="dialog-footer">${original&&!readOnly?'<button type="button" class="danger" data-action="delete-vehicle">刪除此車</button>':''}<button type="button" data-action="close-expense">${readOnly?'關閉':'取消'}</button>${readOnly?'':'<button type="button" class="primary" data-action="save-vehicle">儲存車輛</button>'}</footer>`;
+    if(readOnly)dialog.querySelectorAll('input,select').forEach(el=>el.disabled=true);updateVehiclePreview();dialog.showModal();$('vehicle-name').focus();
+  }
+  function updateVehiclePreview(){if(!vehicleEditor)return;let total=0,valid=true;for(const category of ['rental','fuel']){const parsed=C.parseAmount(vehicleEditor.costs[category].amount);total+=parsed.units;valid&&=parsed.ok;$('vehicle-'+category+'-amount').setAttribute('aria-invalid',String(!parsed.ok));}$('vehicle-preview').textContent=valid?'本車合計 '+money(total)+' 元；儲存後依整趟搭車名單分攤。':'金額須為非負數、最多1位小數。草稿可保留，但須修正後才能結算。';}
+  function handleVehicleDraft(el){if(readOnly||!vehicleEditor)return;if(el.dataset.field==='vehicle-name')vehicleEditor.vehicle.name=el.value;else if(el.dataset.field==='vehicle-cost')vehicleEditor.costs[el.dataset.category].amount=el.value;else if(el.dataset.field==='vehicle-payer')vehicleEditor.costs[el.dataset.category].payerId=el.value||null;else return;updateVehiclePreview();}
+  function saveVehicle(){if(readOnly||!vehicleEditor)return;const {vehicle,costs,isNew}=vehicleEditor;if(isNew)state.vehicles.push(vehicle);else Object.assign(state.vehicles.find(v=>v.id===vehicle.id),vehicle);for(const category of ['rental','fuel']){const cost=costs[category];cost.name=(vehicle.name||'未命名車輛')+' · '+C.CATEGORIES[category];const existing=state.carExpenses.find(e=>e.id===cost.id);if(existing)Object.assign(existing,cost);else state.carExpenses.push(cost);}closeExpense();commit();}
+  function openExpense(dayId,expenseId,planOnly=false) {
+    const isTrip=dayId==='vehicles',d=isTrip?{id:'vehicles',name:'整趟車資',expenses:state.carExpenses}:state.days.find(d=>d.id===dayId);if(!d)return;
     const original=expenseId?d.expenses.find(e=>e.id===expenseId):null;
-    if(expenseId&&!original||!original&&(readOnly||d.expenses.length>=C.LIMITS.expenses))return;
-    const draft=original?JSON.parse(JSON.stringify(original)):C.expense();
-    expenseEditor={dayId,draft,isNew:!original};
-    const e=draft,dialog=$('expense-dialog');
+    if(expenseId&&!original||!original&&!planOnly&&(readOnly||d.expenses.length>=C.LIMITS.expenses))return;
+    const draft=original?JSON.parse(JSON.stringify(original)):isTrip?C.tripExpense():C.expense();
+    if(isTrip&&!original)draft.rides=JSON.parse(JSON.stringify(planOnly?(state.transportRides.length?state.transportRides:state.carExpenses[0]?.rides||state.days.filter(day=>day.useCar).map(day=>({dayId:day.id,participantIds:[]}))):state.days.filter(day=>day.useCar).map(day=>({dayId:day.id,participantIds:[]}))));
+    expenseEditor={dayId,draft,isNew:!original,planOnly,rideCache:isTrip?new Map(draft.rides.map(ride=>[ride.dayId,ride])):null};
+    const e=draft,dialog=$('expense-dialog'),categories=Object.entries(C.CATEGORIES).filter(([key])=>!isTrip||['fuel','rental'].includes(key));
     dialog.dataset.expense=e.id;
-    dialog.innerHTML=`<header class="dialog-head"><h2 id="expense-dialog-title">${readOnly?'查看費用':original?'編輯費用':'新增費用'} · ${esc(d.name||'未命名日期')}</h2><p class="muted tiny">${readOnly?'唯讀快照，參與者與分攤金額供核對。':'填寫後按「儲存費用」套用；取消或按 Esc 不改動帳本。'}</p></header>
+    dialog.innerHTML=`<header class="dialog-head"><h2 id="expense-dialog-title">${readOnly?'查看費用':original?'編輯費用':'新增費用'} · ${esc(d.name||'未命名日期')}</h2><p class="muted tiny">${readOnly?'唯讀快照，參與者與分攤金額供核對。':planOnly?'勾選後按「儲存搭車名單」套用全部車資；取消或按 Esc 不改動帳本。':'填寫後按「儲存費用」套用；取消或按 Esc 不改動帳本。'}</p></header>
       <div class="dialog-body"><div class="expense-form">
       <label class="wide">費用名稱<input id="expense-name-${e.id}" data-field="expense-name" data-expense="${e.id}" value="${esc(e.name)}" maxlength="80" aria-label="費用名稱"></label>
       <label>總金額（元）<input id="amount-${e.id}" data-field="amount" data-expense="${e.id}" value="${esc(e.amount)}" inputmode="decimal" maxlength="32" placeholder="0.0" aria-label="費用總金額"></label>
-      <label>類別<select id="category-${e.id}" data-field="category" data-expense="${e.id}" aria-label="費用類別">${Object.entries(C.CATEGORIES).map(([v,l])=>`<option value="${v}" ${e.category===v?'selected':''}>${l}</option>`).join('')}</select></label>
-      <label class="wide">代墊者<select id="payer-${e.id}" data-field="payer" data-expense="${e.id}" aria-label="費用代墊者">${payerOptions(e)}</select></label></div>
+      <label>類別<select id="category-${e.id}" data-field="category" data-expense="${e.id}" aria-label="費用類別">${categories.map(([v,l])=>`<option value="${v}" ${e.category===v?'selected':''}>${l}</option>`).join('')}</select></label>
+      <label class="wide">代墊者<select id="payer-${e.id}" data-field="payer" data-expense="${e.id}" aria-label="費用代墊者">${payerOptions(e)}</select></label>
+      ${isTrip?`<label class="wide">分攤方式<select id="trip-method" data-field="trip-method" aria-label="車資分攤方式"><option value="person-days" ${e.method==='person-days'?'selected':''}>依乘車人天：每個計費乘車日同價</option><option value="day-average" ${e.method==='day-average'?'selected':''}>先平均每天，再由當日乘客均分</option></select></label>`:''}</div>
+      ${isTrip?`<h3>涵蓋的用車日期</h3><p class="tiny muted">先到每日明細勾選用車與司機，再在此選擇日期和乘客。當司機的日期不計費。</p><div class="trip-date-choices">${state.days.map(day=>`<label class="trip-date-choice"><input type="checkbox" data-field="trip-day" data-day="${day.id}" aria-label="車資涵蓋 ${esc(day.name||'未命名日期')}" ${e.rides.some(ride=>ride.dayId===day.id)?'checked':''}>${esc(day.name||'未命名日期')}${day.useCar?'':'（未用車）'}</label>`).join('')}</div>`:''}
       <div id="expense-preview" class="dialog-preview" role="status"></div><div id="expense-dialog-issues" class="warn" hidden></div>
-      <div class="section-head"><h3>參與者</h3>${readOnly?'':`<div class="select-tools"><button type="button" class="small" data-action="select-all" data-expense="${e.id}">全選</button><button type="button" class="small" data-action="select-none" data-expense="${e.id}">取消全選</button></div>`}</div>
-      <p class="tiny muted">司機只免當日油錢與租車費；用餐仍照常分攤。空白姓名不列入。</p>
-      <div class="dialog-participants">${state.members.filter(C.isNamed).map(m=>`<label class="dialog-person"><input type="checkbox" data-field="draft-participation" data-person="${m.id}" aria-label="${esc(m.name)} 參與本筆費用" ${e.participantIds.includes(m.id)?'checked':''}><span>${esc(m.name)}</span><span class="money" data-draft-share="${m.id}"></span></label>`).join('')||'<p class="muted">請先在統一名單填入姓名。</p>'}</div></div>
+      <div class="section-head"><h3>${isTrip?'每日搭車紀錄':'參與者'}</h3>${readOnly?'':`<div class="select-tools">${isTrip&&!planOnly&&state.carExpenses.some(other=>other.id!==e.id)?'<button type="button" class="small" data-action="copy-trip-rides">沿用上一筆搭車名單</button>':''}<button type="button" class="small" data-action="select-all" data-expense="${e.id}">全選</button><button type="button" class="small" data-action="select-none" data-expense="${e.id}">取消全選</button></div>`}</div>
+      <p class="tiny muted">${isTrip?'有搭車就勾選；當日司機即使勾選仍免當日車資。每日分配僅供核對，並非實際每日耗油。':'司機只免當日油錢與租車費；用餐仍照常分攤。空白姓名不列入。'}</p>
+      ${isTrip?'<div id="trip-ride-matrix"></div>':`<div class="dialog-participants">${state.members.filter(C.isNamed).map(m=>`<label class="dialog-person"><input type="checkbox" data-field="draft-participation" data-person="${m.id}" aria-label="${esc(m.name)} 參與本筆費用" ${e.participantIds.includes(m.id)?'checked':''} ${C.isTransport(e)&&m.excludeTransport?'disabled':''}><span>${esc(m.name)}${C.isTransport(e)&&m.excludeTransport?'（交通自理）':''}</span><span class="money" data-draft-share="${m.id}"></span></label>`).join('')||'<p class="muted">請先在統一名單填入姓名。</p>'}</div>`}</div>
       <footer class="dialog-footer">${!readOnly&&original?`<button type="button" class="danger" data-action="delete-expense" data-expense="${e.id}">刪除此費用</button>`:''}<button type="button" data-action="close-expense">${readOnly?'關閉':'取消'}</button>${readOnly?'':'<button type="button" class="primary" data-action="save-expense">儲存費用</button>'}</footer>`;
+    if(planOnly){dialog.querySelector('.expense-form').hidden=true;$('expense-dialog-title').textContent='整趟搭車名單 · 依乘車人天';dialog.querySelector('[data-action="save-expense"]')?.replaceChildren(document.createTextNode('儲存搭車名單'));}
+    if(isTrip)renderTripRideMatrix();
     if(readOnly)dialog.querySelectorAll('input,select').forEach(el=>el.disabled=true);
-    updateExpensePreview();dialog.showModal();$('expense-name-'+e.id).focus();
+    updateExpensePreview();dialog.showModal();if(planOnly)dialog.querySelector('[data-field="trip-day"]')?.focus();else $('expense-name-'+e.id).focus();
+  }
+  function renderTripRideMatrix() {
+    if(!expenseEditor||expenseEditor.dayId!=='vehicles')return;
+    const e=expenseEditor.draft,days=state.days.filter(day=>e.rides.some(ride=>ride.dayId===day.id)),named=state.members.filter(C.isNamed);
+    $('trip-ride-matrix').innerHTML=days.length?`<div class="trip-rides-scroll"><table aria-label="跨日乘車紀錄"><thead><tr><th class="name-cell corner" scope="col">旅伴</th>${days.map(day=>`<th class="trip-day-head" scope="col"><span class="trip-day-name" title="${esc(day.name)}">${esc(day.name||'未命名日期')}</span><span class="tiny muted" data-trip-day-amount="${day.id}"></span></th>`).join('')}<th scope="col">計費天數</th><th scope="col">合計（元）</th></tr></thead><tbody>${named.map(m=>`<tr><th class="name-cell" scope="row">${esc(m.name)}${m.excludeTransport?'<span class="cell-note">交通自理 · 不計費</span>':''}</th>${days.map(day=>{const ride=e.rides.find(ride=>ride.dayId===day.id);return `<td><div class="participation"><input type="checkbox" data-field="trip-participation" data-day="${day.id}" data-person="${m.id}" aria-label="${esc(m.name)} 搭車 ${esc(day.name||'未命名日期')}" ${ride.participantIds.includes(m.id)?'checked':''} ${readOnly||m.excludeTransport?'disabled':''}><span class="money" data-trip-share="${day.id}-${m.id}" data-day="${day.id}" data-person="${m.id}"></span></div>${day.useCar&&day.drivers.includes(m.id)?'<span class="cell-note">當日司機 · 免付</span>':''}</td>`;}).join('')}<td class="money" data-trip-billable="${m.id}"></td><td class="money" data-trip-total="${m.id}"></td></tr>`).join('')||'<tr><td class="empty">請先填姓名。</td></tr>'}</tbody></table></div>`:'<p class="empty">請先選擇涵蓋的用車日期。</p>';
   }
   function updateExpensePreview() {
     if(!expenseEditor)return;
-    const {dayId,draft:e}=expenseEditor,d=state.days.find(d=>d.id===dayId);if(!d)return;
-    const r=C.calculateExpense(state,d,e);
+    const {dayId,draft:e}=expenseEditor,isTrip=dayId==='vehicles',d=state.days.find(d=>d.id===dayId);if(!isTrip&&!d)return;
+    let r=isTrip?C.calculateTripExpense(state,e):C.calculateExpense(state,d,e);
+    if(expenseEditor.planOnly){
+      const results=state.carExpenses.map(cost=>C.calculateTripExpense(state,{...cost,method:'person-days',rides:e.rides})),base=r;
+      const unique=new Map(results.flatMap(result=>result.issues).map(issue=>[issue.code+issue.message,issue]));
+      r={...base,units:results.reduce((n,result)=>n+result.units,0),allocated:results.reduce((n,result)=>n+result.allocated,0),blocked:results.some(result=>result.blocked),issues:[...unique.values()],shares:Object.fromEntries(state.members.map(m=>[m.id,results.reduce((n,result)=>n+result.shares[m.id],0)])),days:base.days.map(day=>({...day,units:results.reduce((n,result)=>n+(result.days.find(d=>d.dayId===day.dayId)?.units||0),0),shares:Object.fromEntries(state.members.map(m=>[m.id,results.reduce((n,result)=>n+(result.days.find(d=>d.dayId===day.dayId)?.shares[m.id]||0),0)]))}))};
+    }
     $('amount-'+e.id).setAttribute('aria-invalid',String(!r.amountValid));
-    $('expense-preview').textContent=`分攤 ${r.blocked?0:r.eligible.length} 人 · ${shareRange(r)} · 已分攤 ${money(r.allocated)} 元`;
+    $('expense-preview').textContent=(isTrip?`${r.days.length} 天 · ${Object.values(r.billableDays).reduce((n,v)=>n+v,0)} 人天 · `:'')+`分攤 ${r.blocked?0:r.eligible.length} 人 · ${shareRange(r)} · 已分攤 ${money(r.allocated)} 元`;
     const warnings=$('expense-dialog-issues');warnings.hidden=!r.issues.length;warnings.textContent=r.issues.map(i=>i.message).join(' ');
+    if(isTrip){
+      $('expense-dialog').querySelectorAll('[data-trip-share]').forEach(el=>{const dayId=el.dataset.day,pid=el.dataset.person;const day=r.days.find(day=>day.dayId===dayId);el.textContent=money(day?.shares[pid]||0);});
+      $('expense-dialog').querySelectorAll('[data-trip-billable]').forEach(el=>el.textContent=String(r.billableDays[el.dataset.tripBillable]));
+      $('expense-dialog').querySelectorAll('[data-trip-total]').forEach(el=>el.textContent=money(r.shares[el.dataset.tripTotal]));
+      $('expense-dialog').querySelectorAll('[data-trip-day-amount]').forEach(el=>{const day=r.days.find(day=>day.dayId===el.dataset.tripDayAmount);el.textContent=r.blocked?'待處理':money(day?.units||0)+' 元';});
+      $('expense-dialog').querySelectorAll('[data-field="trip-participation"]').forEach(el=>el.checked=e.rides.find(ride=>ride.dayId===el.dataset.day)?.participantIds.includes(el.dataset.person)||false);
+      return;
+    }
     $('expense-dialog').querySelectorAll('[data-draft-share]').forEach(el=>el.textContent=money(r.shares[el.dataset.draftShare])+' 元');
-    $('expense-dialog').querySelectorAll('[data-field="draft-participation"]').forEach(el=>el.checked=e.participantIds.includes(el.dataset.person));
+    $('expense-dialog').querySelectorAll('[data-field="draft-participation"]').forEach(el=>{el.checked=e.participantIds.includes(el.dataset.person);el.disabled=readOnly||C.isTransport(e)&&state.members.some(m=>m.id===el.dataset.person&&m.excludeTransport);});
   }
   function handleExpenseDraft(el) {
     if(readOnly||!expenseEditor)return;
     const e=expenseEditor.draft,field=el.dataset.field;
-    if(field==='expense-name')e.name=el.value;
+    if(field==='trip-method'&&expenseEditor.dayId==='vehicles')e.method=el.value;
+    else if(field==='trip-day'&&expenseEditor.dayId==='vehicles'){
+      if(el.checked){const ride=expenseEditor.rideCache.get(el.dataset.day)||{dayId:el.dataset.day,participantIds:[]};expenseEditor.rideCache.set(el.dataset.day,ride);if(!e.rides.some(r=>r.dayId===ride.dayId))e.rides.push(ride);}
+      else e.rides=e.rides.filter(ride=>ride.dayId!==el.dataset.day);
+      renderTripRideMatrix();
+    }
+    else if(field==='trip-participation'&&expenseEditor.dayId==='vehicles'){const ride=e.rides.find(ride=>ride.dayId===el.dataset.day);if(ride&&state.members.some(m=>m.id===el.dataset.person&&C.isNamed(m)&&!m.excludeTransport))ride.participantIds=toggleIn(ride.participantIds,el.dataset.person,el.checked);}
+    else if(field==='expense-name')e.name=el.value;
     else if(field==='amount')e.amount=el.value;
     else if(field==='category')e.category=el.value;
     else if(field==='payer')e.payerId=el.value||null;
-    else if(field==='draft-participation'&&state.members.some(m=>m.id===el.dataset.person&&C.isNamed(m)))e.participantIds=toggleIn(e.participantIds,el.dataset.person,el.checked);
+    else if(field==='draft-participation'&&state.members.some(m=>m.id===el.dataset.person&&C.isNamed(m)&&!(C.isTransport(e)&&m.excludeTransport)))e.participantIds=toggleIn(e.participantIds,el.dataset.person,el.checked);
     else return;
     updateExpensePreview();
   }
   function selectDraftParticipants(on) {
     if(readOnly||!expenseEditor)return;
+    if(expenseEditor.dayId==='vehicles'){expenseEditor.draft.rides.forEach(ride=>{const ids=new Set(ride.participantIds);state.members.filter(m=>C.isNamed(m)&&!m.excludeTransport).forEach(m=>on?ids.add(m.id):ids.delete(m.id));ride.participantIds=[...ids];});updateExpensePreview();return;}
     const ids=new Set(expenseEditor.draft.participantIds);
-    state.members.filter(C.isNamed).forEach(m=>on?ids.add(m.id):ids.delete(m.id));expenseEditor.draft.participantIds=[...ids];updateExpensePreview();
+    state.members.filter(m=>C.isNamed(m)&&!(C.isTransport(expenseEditor.draft)&&m.excludeTransport)).forEach(m=>on?ids.add(m.id):ids.delete(m.id));expenseEditor.draft.participantIds=[...ids];updateExpensePreview();
   }
   function saveExpense() {
     if(readOnly||!expenseEditor)return;
-    const {dayId,draft,isNew}=expenseEditor,d=state.days.find(d=>d.id===dayId);if(!d)return;
+    if(expenseEditor.planOnly){state.transportRides=JSON.parse(JSON.stringify(expenseEditor.draft.rides));state.carExpenses.forEach(e=>{e.method='person-days';e.rides=JSON.parse(JSON.stringify(state.transportRides));});closeExpense();commit();return;}
+    const {dayId,draft,isNew}=expenseEditor,d=dayId==='vehicles'?{expenses:state.carExpenses}:state.days.find(d=>d.id===dayId);if(!d)return;
     if(isNew){if(d.expenses.length>=C.LIMITS.expenses)return;d.expenses.push(draft);}
     else {const e=d.expenses.find(e=>e.id===draft.id);if(!e)return;Object.assign(e,draft);}
     closeExpense();commit();$('edit-'+draft.id)?.focus({preventScroll:true});
   }
   $('expense-dialog').addEventListener('cancel',event=>{event.preventDefault();closeExpense();});
+  function renderVehicles() {
+    const results=state.carExpenses.map(e=>C.calculateTripExpense(state,e)),sum=key=>results.reduce((n,r)=>n+r[key],0);
+    const people=state.members.filter(C.isNamed),fuel=state.carExpenses.reduce((n,e,i)=>n+(e.category==='fuel'?results[i].units:0),0),rental=state.carExpenses.reduce((n,e,i)=>n+(e.category==='rental'?results[i].units:0),0);
+    const ungrouped=state.carExpenses.filter(e=>!e.vehicleId),vehicleRows=state.vehicles.map(v=>{const pending=results.filter((r,i)=>state.carExpenses[i].vehicleId===v.id).reduce((n,r)=>n+r.issues.length,0);const rental=state.carExpenses.filter(e=>e.vehicleId===v.id&&e.category==='rental').reduce((n,e)=>n+C.parseAmount(e.amount).units,0),fuel=state.carExpenses.filter(e=>e.vehicleId===v.id&&e.category==='fuel').reduce((n,e)=>n+C.parseAmount(e.amount).units,0);return `<tr><th class="name-cell">${esc(v.name||'未命名車輛')}${pending?`<span class="person-index">待處理 ${pending} 項 · 請編輯或檢查搭車名單</span>`:''}</th><td class="money" data-fleet="${v.id}-rental">${money(rental)}</td><td class="money" data-fleet="${v.id}-fuel">${money(fuel)}</td><td class="money" data-fleet="${v.id}-total">${money(rental+fuel)}</td><td><button type="button" class="small" data-action="edit-vehicle" data-vehicle="${v.id}">${readOnly?'查看':'編輯'}</button></td></tr>`;}).join('');
+    $('view').innerHTML=`<div class="section-head"><div><h2>交通費用</h2><p class="muted">每台車分開填租金與油錢，合併按乘車人天分攤。</p></div></div>
+      <div class="daily-tools"><button type="button" class="primary" data-action="add-vehicle" ${state.vehicles.length>=50||state.carExpenses.length>98?'disabled':''}>＋ 新增車輛</button><button type="button" data-action="open-ride-plan">${readOnly?'查看':'設定'}整趟搭車名單</button><button type="button" class="small" data-action="add-expense" ${state.carExpenses.length>=C.LIMITS.expenses?'disabled':''}>＋ 新增整趟車資</button></div>
+      <div class="stats"><div class="stat featured"><div class="label">總車資</div><div class="value money" data-transport="total">${money(fuel+rental)}<span class="unit">元</span></div><div class="note">租車費＋油錢，含額外車資</div></div><div class="stat"><div class="label">總租車費</div><div class="value money" data-transport="rental">${money(rental)}<span class="unit">元</span></div></div><div class="stat"><div class="label">總油錢</div><div class="value money" data-transport="fuel">${money(fuel)}<span class="unit">元</span></div></div><div class="stat"><div class="label">已分攤</div><div class="value money">${money(sum('allocated'))}<span class="unit">元</span></div><div class="note">差額 ${money(sum('units')-sum('allocated'))} 元</div></div></div>
+      <p class="daily-note">交通自理者不計人天；當司機的日期免付。名單統一設定後會套用本區所有車資。僅登錄本團車輛；他人自付的包車費不列入。停車費仍在每日明細登錄。同一筆費用請勿重複輸入。</p>
+      <section class="panel"><div class="table-caption"><h3>各車租金與油錢</h3><span class="tiny muted">${state.vehicles.length} 台車 · 單位：元</span></div><div class="table-scroll"><table style="min-width:620px" aria-label="各車交通費用"><thead><tr><th class="name-cell corner">車輛</th><th>租車費</th><th>油錢</th><th>該車合計</th><th>操作</th></tr></thead><tbody>${vehicleRows||'<tr><td colspan="5" class="empty">按「新增車輛」逐台填寫，例如大車1、大車2、小車。</td></tr>'}</tbody></table></div></section>
+      ${ungrouped.length?`<section class="panel"><div class="table-caption"><h3>其他整趟車資</h3></div><div class="table-scroll"><table class="trip-costs-table" aria-label="整趟車資費用"><thead><tr><th scope="col">費用（點選${readOnly?'查看':'編輯'}）</th><th scope="col">類別</th><th scope="col">總金額</th><th scope="col">分攤方式</th><th scope="col">涵蓋日期</th><th scope="col">已分攤</th><th scope="col">狀態</th></tr></thead><tbody>${ungrouped.map(e=>{const r=results[state.carExpenses.indexOf(e)];return `<tr><td><button id="edit-${e.id}" type="button" class="text" data-action="open-expense" data-expense="${e.id}">${esc(e.name||'未命名費用')} ↗</button></td><td>${C.CATEGORIES[e.category]}</td><td class="money">${r.amountValid?money(r.units):'待修正'}</td><td>${e.method==='person-days'?'依乘車人天':'先平均每天'}</td><td>${r.days.map(day=>esc(day.dayName||'未命名日期')).join('、')||'未選日期'}</td><td class="money">${money(r.allocated)}</td><td>${r.issues.length?'待處理 '+r.issues.length+' 項':'已核對'}</td></tr>`;}).join('')}</tbody></table></div></section>`:!state.vehicles.length?'<div class="trip-empty"><h3>還車才加油，也能整趟分攤</h3><p class="muted">新增一筆總油錢，勾選涵蓋的日期與每日乘客；多台車可合併總額，或分成多筆記錄。</p></div>':''}
+      <section class="panel"><div class="table-caption"><h3>整趟車資個人合計</h3><span class="tiny muted">已併入整趟總覽</span></div><div class="table-scroll"><table aria-label="整趟車資個人分攤"><thead><tr><th class="name-cell corner">旅伴</th><th>油錢</th><th>租車費</th><th>合計</th></tr></thead><tbody>${people.map(m=>{const fuel=state.carExpenses.reduce((n,e,i)=>n+(e.category==='fuel'?results[i].shares[m.id]:0),0),rental=state.carExpenses.reduce((n,e,i)=>n+(e.category==='rental'?results[i].shares[m.id]:0),0);return `<tr><th class="name-cell">${esc(m.name)}</th><td class="money" data-vehicle="${m.id}-fuel">${money(fuel)}</td><td class="money" data-vehicle="${m.id}-rental">${money(rental)}</td><td class="money">${money(fuel+rental)}</td></tr>`;}).join('')||'<tr><td colspan="4" class="empty">請先在統一名單填姓名。</td></tr>'}</tbody></table></div></section>`;
+  }
   function renderDaily() {
     const d=currentDay();if(!d){active='overview';renderOverview();return;}
     const results=new Map(d.expenses.map(e=>[e.id,C.calculateExpense(state,d,e)]));
     const titles=d.expenses.map(e=>{const r=results.get(e.id);return `<th scope="col" class="expense-title" data-category="${e.category}" id="title-${e.id}"><button type="button" class="expense-open" id="edit-${e.id}" data-action="open-expense" data-expense="${e.id}" aria-label="${readOnly?'查看':'編輯'}費用 ${esc(e.name||'未命名費用')}"><span class="compact-expense-name" title="${esc(e.name||'未命名費用')}">${esc(e.name||'未命名費用')} <span aria-hidden="true">${readOnly?'↗':'✎'}</span></span><span class="tiny muted">${r.amountValid?money(r.units)+' 元':'金額待修正'} · <span data-count="${e.id}">${r.blocked?0:r.eligible.length}</span> 人${r.issues.length?' · 待處理':''}</span></button></th>`;}).join('');
     const rows=state.members.map((m,i)=>`<tr><th scope="row" class="name-cell"><span class="person-label ${C.isNamed(m)?'':'muted'}">${esc(memberName(m))}</span><span class="person-index">${i+1} ${!C.isNamed(m)?'· 不列入分攤':''}</span></th>
       <td class="driver-cell"><label><input type="checkbox" id="driver-${d.id}-${m.id}" data-field="driver" data-person="${m.id}" aria-label="${esc(memberName(m))} 當日司機" ${d.drivers.includes(m.id)?'checked':''} ${!d.useCar||!C.isNamed(m)?'disabled':''}><span class="sr-only">當日司機</span></label></td>
-      ${d.expenses.map(e=>{const r=results.get(e.id), exempt=C.isCar(e)&&d.useCar&&d.drivers.includes(m.id)&&C.isNamed(m);return `<td><div class="participation"><label><input type="checkbox" id="part-${e.id}-${m.id}" data-field="participation" data-person="${m.id}" data-expense="${e.id}" aria-label="${esc(memberName(m))} 參與 ${esc(e.name||'未命名費用')} 費用 ${d.expenses.indexOf(e)+1}" ${e.participantIds.includes(m.id)?'checked':''} ${C.isNamed(m)?'':'disabled'}></label><div><span class="amount-label money ${r.shares[m.id]?'':'cell-zero'}" data-share="${e.id}-${m.id}">${money(r.shares[m.id])}</span><span class="cell-note">${exempt?'司機免車資':C.isCar(e)&&!d.useCar?'當日未用車':!C.isNamed(m)?'待填姓名':r.blocked?'待處理':''}</span></div></div></td>`;}).join('')}</tr>`).join('');
+      ${d.expenses.map(e=>{const r=results.get(e.id), exempt=C.isCar(e)&&d.useCar&&d.drivers.includes(m.id)&&C.isNamed(m);return `<td><div class="participation"><label><input type="checkbox" id="part-${e.id}-${m.id}" data-field="participation" data-person="${m.id}" data-expense="${e.id}" aria-label="${esc(memberName(m))} 參與 ${esc(e.name||'未命名費用')} 費用 ${d.expenses.indexOf(e)+1}" ${e.participantIds.includes(m.id)?'checked':''} ${C.isNamed(m)&&!(C.isTransport(e)&&m.excludeTransport)?'':'disabled'}></label><div><span class="amount-label money ${r.shares[m.id]?'':'cell-zero'}" data-share="${e.id}-${m.id}">${money(r.shares[m.id])}</span><span class="cell-note">${C.isTransport(e)&&m.excludeTransport?'交通自理 · 不計費':exempt?'司機免車資':C.isCar(e)&&!d.useCar?'當日未用車':!C.isNamed(m)?'待填姓名':r.blocked?'待處理':''}</span></div></div></td>`;}).join('')}</tr>`).join('');
     const issues=d.expenses.reduce((n,e)=>n+results.get(e.id).issues.length,0), total=d.expenses.reduce((n,e)=>n+results.get(e.id).units,0), allocated=d.expenses.reduce((n,e)=>n+results.get(e.id).allocated,0);
     $('view').innerHTML=`<div class="daily-tools"><label><span class="sr-only">當日名稱</span><input id="day-name-${d.id}" class="daily-title" data-field="day-name" value="${esc(d.name)}" maxlength="80" aria-label="當日名稱"></label><label class="switch"><input id="use-car-${d.id}" type="checkbox" data-field="use-car" ${d.useCar?'checked':''}> 當日用車</label><button type="button" class="danger" data-action="delete-day" ${state.days.length===1?'disabled':''}>刪除此天</button></div>
       <div class="section-head"><p class="muted">${readOnly?'檢視當日參與者、司機與分攤結果。':'每天獨立勾選參與者與司機。'}</p><button type="button" class="primary" data-action="add-expense" ${d.expenses.length>=C.LIMITS.expenses?'disabled':''}>＋ 新增費用</button></div>
@@ -697,14 +862,14 @@ globalThis.TripExport=TripExport;
     let selection=null;try {if(typeof focused?.selectionStart==='number')selection=[focused.selectionStart,focused.selectionEnd];}catch{}
     const positions=[...document.querySelectorAll('.table-scroll,#tabs')].map(el=>[el.id,el.scrollLeft,el.scrollTop]);
     const scrollY=window.scrollY;
-    renderRoster();renderTabs();active==='overview'?renderOverview():active==='personal'?renderPersonal():renderDaily();
+    renderRoster();renderTabs();active==='overview'?renderOverview():active==='vehicles'?renderVehicles():active==='personal'?renderPersonal():renderDaily();
     if(readOnly) {
       $('roster').hidden=true;
       document.querySelector('.tools').hidden=true;
       document.querySelector('[data-action="add-day"]').hidden=true;
       $('save-status').textContent=`唯讀快照 · 更新於 ${snapshotTime}（台北時間）`;
       document.querySelectorAll('#view input,#view select').forEach(el=>{el.disabled=el.id!=='personal-person';});
-      document.querySelectorAll('#view button[data-action]').forEach(el=>{if(!['tab','goto-expense','open-expense','close-expense'].includes(el.dataset.action))el.hidden=true;});
+      document.querySelectorAll('#view button[data-action]').forEach(el=>{if(!['tab','goto-expense','open-expense','close-expense','edit-vehicle','open-ride-plan'].includes(el.dataset.action))el.hidden=true;});
     }
     for(const [pid,x,y] of positions){const el=pid&&$(pid);if(el){el.scrollLeft=x;el.scrollTop=y;}}
     if(focusId&&$(focusId)){const el=$(focusId);el.focus({preventScroll:true});if(selection)try{el.setSelectionRange(...selection);}catch{}}
@@ -718,7 +883,7 @@ globalThis.TripExport=TripExport;
   function toggleIn(list,value,on) {return on?[...new Set([...list,value])]:list.filter(x=>x!==value);}
   function handleField(el) {
     const field=el.dataset.field;if(!field)return;
-    if(el.closest('#expense-dialog')){handleExpenseDraft(el);return;}
+    if(el.closest('#expense-dialog')){if(vehicleEditor)handleVehicleDraft(el);else handleExpenseDraft(el);return;}
     if(field==='personal-person'){selectedPerson=el.value;render();return;}
     if(readOnly)return;
     const entry=state.ledger.find(e=>e.id===el.dataset.ledger);
@@ -732,17 +897,19 @@ globalThis.TripExport=TripExport;
       commit();return;
     }
     const d=currentDay(), e=d?.expenses.find(e=>e.id===el.dataset.expense), m=state.members.find(m=>m.id===el.dataset.person);
-    if(field==='member-name'&&m)m.name=el.value;
+    if(field==='exclude-transport'&&m)m.excludeTransport=el.checked;
+    else if(field==='member-name'&&m)m.name=el.value;
     else if(field==='day-name'&&d)d.name=el.value;
     else if(field==='expense-name'&&e)e.name=el.value;
     else if(field==='amount'&&e)e.amount=el.value;
     else if(field==='category'&&e)e.category=el.value;
     else if(field==='payer'&&e)e.payerId=el.value||null;
-    else if(field==='participation'&&e&&m&&C.isNamed(m))e.participantIds=toggleIn(e.participantIds,m.id,el.checked);
+    else if(field==='participation'&&e&&m&&C.isNamed(m)&&!(C.isTransport(e)&&m.excludeTransport))e.participantIds=toggleIn(e.participantIds,m.id,el.checked);
     else if(field==='driver'&&d&&m&&d.useCar&&C.isNamed(m))d.drivers=toggleIn(d.drivers,m.id,el.checked);
     else if(field==='use-car'&&d) {
-      const hasCarMoney=d.expenses.some(e=>C.isCar(e)&&(e.amount.trim()!==''&&(!C.parseAmount(e.amount).ok||C.parseAmount(e.amount).units>0)));
-      if(!el.checked&&hasCarMoney&&!confirm('此日已有油錢或租車費。取消用車後，金額、代墊者、司機與參與紀錄仍會保留，但車資暫不分攤並列為待處理。要取消用車嗎？')){render();return;}
+      const hasTripMoney=state.carExpenses.some(e=>e.rides.some(ride=>ride.dayId===d.id)&&(e.amount.trim()!==''&&(!C.parseAmount(e.amount).ok||C.parseAmount(e.amount).units>0)));
+      const hasCarMoney=hasTripMoney||d.expenses.some(e=>C.isCar(e)&&(e.amount.trim()!==''&&(!C.parseAmount(e.amount).ok||C.parseAmount(e.amount).units>0)));
+      if(!el.checked&&hasCarMoney&&!confirm('此日已有油錢或租車費。取消用車後，金額、代墊者、司機與參與紀錄仍會保留；當日車資及涵蓋此日的整趟車資暫不分攤並列為待處理。要取消用車嗎？')){render();return;}
       d.useCar=el.checked;
     } else return;
     commit();
@@ -758,13 +925,34 @@ globalThis.TripExport=TripExport;
   document.addEventListener('click',event=>{
     const button=event.target.closest('button[data-action]');if(!button||button.disabled)return;
     const action=button.dataset.action, d=currentDay(), eid=button.dataset.expense;
-    if(readOnly&&!['tab','goto-expense','open-expense','close-expense'].includes(action))return;
+    if(readOnly&&!['tab','goto-expense','open-expense','close-expense','edit-vehicle','open-ride-plan'].includes(action))return;
+    if(action==='add-vehicle'){openVehicle();return;}
+    if(action==='edit-vehicle'){openVehicle(button.dataset.vehicle);return;}
+    if(action==='open-ride-plan'){openExpense('vehicles',null,true);return;}
+    if(action==='save-vehicle'){saveVehicle();return;}
+    if(action==='delete-vehicle'){
+      if(!vehicleEditor)return;const id=vehicleEditor.vehicle.id;
+      if(!confirm('確定刪除此車與其租金、油錢及代墊紀錄？其他車輛與搭車名單會保留。'))return;
+      state.vehicles=state.vehicles.filter(v=>v.id!==id);state.carExpenses=state.carExpenses.filter(e=>e.vehicleId!==id);closeExpense();commit();return;
+    }
     if(action==='close-expense'){closeExpense();return;}
-    if(action==='open-expense'){if(d)openExpense(d.id,eid);return;}
+    if(action==='open-expense'){if(active==='vehicles'||d)openExpense(active,eid);return;}
+    if(action==='copy-trip-rides'){
+      if(!expenseEditor||expenseEditor.dayId!=='vehicles')return;
+      const source=[...state.carExpenses].reverse().find(e=>e.id!==expenseEditor.draft.id);if(!source)return;
+      expenseEditor.draft.rides=JSON.parse(JSON.stringify(source.rides));expenseEditor.rideCache=new Map(expenseEditor.draft.rides.map(ride=>[ride.dayId,ride]));
+      $('expense-dialog').querySelectorAll('[data-field="trip-day"]').forEach(el=>el.checked=expenseEditor.draft.rides.some(ride=>ride.dayId===el.dataset.day));renderTripRideMatrix();updateExpensePreview();return;
+    }
     if(action==='save-expense'){saveExpense();return;}
     if(action==='tab'){selectTab(button.dataset.tab);return;}
     if(action==='open-roster'){$('roster').open=true;$('roster').scrollIntoView({block:'start'});$('name-'+state.members[0].id)?.focus();return;}
     if(action==='goto-expense'){if(button.dataset.person)selectedPerson=button.dataset.person;if(button.dataset.ledger){const source=state.ledger.find(e=>e.id===button.dataset.ledger);if(source)selectedPerson=source.personId;}selectTab(button.dataset.tab);if(eid){openExpense(button.dataset.tab,eid);$('amount-'+eid)?.focus();}else $('ledger-amount-'+button.dataset.ledger)?.focus();return;}
+    if(action==='add-expense'&&active==='vehicles'){openExpense('vehicles',null);return;}
+    if(action==='delete-expense'&&active==='vehicles'){
+      const e=state.carExpenses.find(e=>e.id===eid);if(!e)return;
+      if((e.amount||e.payerId||e.rides.length)&&!confirm('確定刪除此筆整趟車資與所有乘車紀錄？建議先備份。'))return;
+      state.carExpenses=state.carExpenses.filter(e=>e.id!==eid);closeExpense();commit();return;
+    }
     if(action==='add-ledger'){
       const member=state.members.find(m=>m.id===selectedPerson);if(!member||!C.isNamed(member)||state.ledger.length>=C.LIMITS.ledger)return;
       const entry=C.ledgerEntry(selectedPerson);state.ledger.push(entry);commit();$('ledger-description-'+entry.id).focus();return;
@@ -804,14 +992,16 @@ globalThis.TripExport=TripExport;
     }
     if(action==='add-member'){
       if(state.members.length>=C.LIMITS.members)return;
-      const m={id:C.id('p'),name:''};state.members.push(m);commit();$('name-'+m.id).focus();return;
+      const m={id:C.id('p'),name:'',excludeTransport:false};state.members.push(m);commit();$('name-'+m.id).focus();return;
     }
     if(action==='delete-member'){
       if(state.members.length===1)return;
       const pid=button.dataset.person, m=state.members.find(m=>m.id===pid);
-      const hasData=m.name.trim()||state.ledger.some(e=>e.personId===pid||e.payerId===pid)||state.days.some(d=>d.drivers.includes(pid)||d.expenses.some(e=>e.payerId===pid||e.participantIds.includes(pid)));
+      const hasData=m.name.trim()||state.carExpenses.some(e=>e.payerId===pid||e.rides.some(ride=>ride.participantIds.includes(pid)))||state.ledger.some(e=>e.personId===pid||e.payerId===pid)||state.days.some(d=>d.drivers.includes(pid)||d.expenses.some(e=>e.payerId===pid||e.participantIds.includes(pid)));
       if(hasData&&!confirm(`確定刪除「${memberName(m)}」？將移除其個人紀錄、所有日期的司機、參與與代墊關聯，剩餘成員會重新分攤；建議先備份。`))return;
       state.members=state.members.filter(m=>m.id!==pid);
+      state.transportRides.forEach(ride=>ride.participantIds=ride.participantIds.filter(id=>id!==pid));
+      state.carExpenses.forEach(e=>{if(e.payerId===pid)e.payerId=null;e.rides.forEach(ride=>ride.participantIds=ride.participantIds.filter(id=>id!==pid));});
       state.ledger=state.ledger.filter(e=>e.personId!==pid);state.ledger.forEach(e=>{if(e.payerId===pid)e.payerId=null;});
       state.days.forEach(d=>{d.drivers=d.drivers.filter(x=>x!==pid);d.expenses.forEach(e=>{e.participantIds=e.participantIds.filter(x=>x!==pid);if(e.payerId===pid)e.payerId=null;});});commit();return;
     }
@@ -821,7 +1011,9 @@ globalThis.TripExport=TripExport;
     }
     if(!d)return;
     if(action==='delete-day'){
-      if(state.days.length===1||!confirm(`確定刪除「${d.name||'未命名日期'}」及當日所有費用、參與與司機紀錄？建議先匯出備份。`))return;
+      if(state.days.length===1||!confirm(`確定刪除「${d.name||'未命名日期'}」及當日所有費用、參與與司機紀錄？也會移除此日的整趟車資乘車紀錄並重新計算。建議先匯出備份。`))return;
+      state.transportRides=state.transportRides.filter(ride=>ride.dayId!==d.id);
+      state.carExpenses.forEach(e=>e.rides=e.rides.filter(ride=>ride.dayId!==d.id));
       const index=state.days.indexOf(d);state.days.splice(index,1);active=state.days[Math.max(0,index-1)].id;commit();return;
     }
     if(action==='add-expense'){
@@ -837,7 +1029,7 @@ globalThis.TripExport=TripExport;
   });
   $('tabs').addEventListener('keydown',event=>{
     if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
-    const ids=['overview','personal',...state.days.map(d=>d.id)], index=ids.indexOf(active);
+    const ids=['overview','vehicles','personal',...state.days.map(d=>d.id)], index=ids.indexOf(active);
     const next=event.key==='Home'?0:event.key==='End'?ids.length-1:(index+(event.key==='ArrowRight'?1:-1)+ids.length)%ids.length;
     event.preventDefault();selectTab(ids[next]);$('tab-'+active).focus();
   });
