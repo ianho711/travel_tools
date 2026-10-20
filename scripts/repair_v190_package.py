@@ -1,4 +1,4 @@
-"""Rebuild a private v1.9.0 ZIP without opening HTML or driving a browser.
+"""Upgrade a private v1.9.0 ZIP to the current app version without opening HTML or driving a browser.
 
 Usage: python scripts/repair_v190_package.py ORIGINAL.zip NEW.zip
 Requires Node.js and openpyxl. Original inputs are never modified. Do not commit
@@ -45,9 +45,13 @@ function bootstrap(page,stored,readonly) {
  const app=extract(page,'trip-app').replace('  render();if(initialMessage)','  globalThis.loadedState=state;globalThis.loadedReadOnly=readOnly;if(initialMessage)');
  vm.runInContext(app,ctx);assert.equal(ctx.loadedReadOnly,readonly);return JSON.stringify(ctx.loadedState);
 }
-// Only script logic, the recovery banner and embedded account seed are changed.
+// Update shared logic, version labels, the recovery banner and embedded account seed.
 for(const [source,target,readonly] of [[originalHTML,'editable.html',false],[originalView,'readonly.html',true]]){
  let page=source;
+ page=page.replace(/(<title>旅伴帳本 v)[^｜<]+/,()=>'<title>旅伴帳本 v'+C.APP_VERSION);
+ page=page.replace(/(<span[^>]*id="app-version"[^>]*>)[^<]*(<\/span>)/,(_all,start,end)=>start+'v'+C.APP_VERSION+end);
+ assert.ok(page.includes('<title>旅伴帳本 v'+C.APP_VERSION+'｜'),'Static title version mismatch');
+ assert.ok(page.match(/id="app-version"[^>]*>v([0-9.]+)</)[1]===C.APP_VERSION,'Visible version mismatch');
  for(const id of ['trip-core','trip-export','trip-app'])page=page.replace(new RegExp('<script id="'+id+'">[\\s\\S]*?</script>'),()=>'<script id="'+id+'">'+extract(html,id)+'</script>');
  const storage='<script id="trip-storage">'+extract(html,'trip-storage')+'</script>';
  page=page.replace(/<script id="trip-storage">[\s\S]*?<\/script>\s*/,'').replace('<script id="trip-app">',()=>storage+'\n\n<script id="trip-app">');
@@ -71,7 +75,7 @@ for(const [source,target,readonly] of [[originalHTML,'editable.html',false],[ori
 }
 fs.writeFileSync(output+'/report.xlsx',Buffer.from(E.xlsx(state,now)));
 fs.writeFileSync(output+'/tables.json',JSON.stringify(E.report(state,now)));
-fs.writeFileSync(output+'/summary.json',JSON.stringify({cashExpense:after.cashExpense/10,income:after.income/10,total:after.total/10,allocated:after.allocated/10,difference:after.difference/10,issues:after.issues.length,transportAllocated:after.transport.allocated/10,carAllocated:after.expenses.filter(e=>e.dayId==='vehicles').reduce((n,e)=>n+e.allocated,0)/10}));
+fs.writeFileSync(output+'/summary.json',JSON.stringify({appVersion:C.APP_VERSION,dataVersion:state.version,cashExpense:after.cashExpense/10,income:after.income/10,total:after.total/10,allocated:after.allocated/10,difference:after.difference/10,issues:after.issues.length,transportAllocated:after.transport.allocated/10,carAllocated:after.expenses.filter(e=>e.dayId==='vehicles').reduce((n,e)=>n+e.allocated,0)/10}));
 '''
 
 
@@ -129,7 +133,8 @@ def main():
         summary.update({'originalZipSHA256':digest,'accountJSONUnchanged':True,'sharedScriptsIdentical':True,'editableReadonlyExcelMatch':True,'initializationVerifiedWithoutUI':True,'sheets':len(wb.sheetnames),'nonemptyCellsChecked':count,'verification':'Nonvisual Node VM, JSON round trip, openpyxl cell/column checks; no browser/UI/screenshots'})
         parent=PurePosixPath(books[0]).parent
         contents[str(parent/'修正版驗證結果.json')]=json.dumps(summary,ensure_ascii=False,indent=2).encode()
-        manual=f'''旅伴帳本 v1.9.0 修正版（2026-10-20）
+        manual=f'''旅伴帳本 v{summary['appVersion']} 修正版（2026-10-20）
+JSON資料格式：version {summary['dataVersion']}，保留原備份相容性。
 
 修正範圍：多分頁修訂衝突保護、車輛費用100筆上限、交通報表明細與小計分離。
 分攤規則與原JSON內容均不變；可編輯版、唯讀快照及Excel含相同帳目。
@@ -146,12 +151,17 @@ def main():
 5. HTML及Excel版面、按鈕與提示由你確認；自動驗證結果見修正版驗證結果.json。
 '''
         contents[str(parent/'修正版說明與手動確認.txt')]=manual.encode('utf-8-sig')
+        # Rename only archive paths; the original JSON bytes remain untouched.
+        renamed=lambda name:re.sub(r'(?<![0-9])1\.9\.0(?![0-9])',summary['appVersion'],name)
+        renamed_contents={renamed(name):data for name,data in contents.items()}
+        assert len(renamed_contents)==len(contents),'Archive path collision'
+        contents=renamed_contents
         dest.parent.mkdir(parents=True,exist_ok=True)
         with ZipFile(dest,'x',ZIP_DEFLATED) as z:
             for name,data in contents.items():z.writestr(name,data)
         with ZipFile(dest) as z:
             assert z.testzip() is None
-            assert z.read(books[0])==contents[books[0]]
+            assert z.read(renamed(books[0]))==(original/'book.json').read_bytes()
         assert hashlib.sha256(src.read_bytes()).hexdigest()==digest,'Original ZIP changed'
         print(json.dumps(summary,ensure_ascii=False,indent=2));print('Output:',dest)
 
