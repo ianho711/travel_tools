@@ -60,8 +60,8 @@ def main():
 
             context.route('**/*', route_request)
             page.goto(url)
-            expect(page).to_have_title('旅伴帳本 v1.10.0｜旅遊費用分攤')
-            expect(page.locator('#app-version')).to_have_text('v1.10.0')
+            expect(page).to_have_title('旅伴帳本 v2.0.1｜旅遊費用分攤')
+            expect(page.locator('#app-version')).to_have_text('v2.0.1')
             expect(page.get_by_role('tab')).to_have_count(7)
             expect(page.locator('#total-expense')).to_have_text('0.0元')
             expect(page.locator('#roster-summary')).to_contain_text('0 位已填姓名 / 25 個名額')
@@ -491,7 +491,7 @@ def main():
             editor_state = state()
             shared = context.new_page()
             shared.goto(url.replace('index.html', 'shared-view.html'))
-            expect(shared).to_have_title('旅伴帳本 v1.10.0｜唯讀旅遊費用')
+            expect(shared).to_have_title('旅伴帳本 v2.0.1｜唯讀旅遊費用')
             expect(shared.locator('.tools')).to_be_hidden()
             expect(shared.locator('#roster')).to_be_hidden()
             expect(shared.locator('[data-action="add-day"]')).to_be_hidden()
@@ -1358,18 +1358,18 @@ def main():
             assert report['整趟車資']['J4'].value==5250
             assert report['整趟總覽']['J3'].value==6310 and report['整趟總覽']['L3'].value==400
             assert report['個人結算']['H4'].value==6010 and report['個人結算']['M4'].value==1654.3
-            assert 'v1.10.0' in report['整趟總覽']['A1'].value
-            assert report['使用說明']['B3'].value=='v1.10.0'
+            assert 'v2.0.1' in report['整趟總覽']['A1'].value
+            assert report['使用說明']['B3'].value=='v2.0.1'
             with page.expect_download() as info:page.get_by_role('button',name='匯出唯讀網頁',exact=True).click()
             income_view=artifacts/'rental-income-view.html';info.value.save_as(income_view)
             context.route('**/rental-income-view.html',lambda r:r.fulfill(path=str(income_view),content_type='text/html; charset=utf-8'))
             ir=context.new_page();ir.goto(url.replace('index.html','rental-income-view.html'))
-            expect(ir).to_have_title('旅伴帳本 v1.10.0｜唯讀旅遊費用')
-            expect(ir.locator('#app-version')).to_have_text('v1.10.0')
+            expect(ir).to_have_title('旅伴帳本 v2.0.1｜唯讀旅遊費用')
+            expect(ir.locator('#app-version')).to_have_text('v2.0.1')
             expect(ir.locator('#total-income')).to_have_text('400.0')
             ir.locator('#tab-personal').click();ir.locator('#personal-person').select_option(fa)
             expect(ir.locator('[data-personal="advanced"]')).to_have_text('6,010.0 元');ir.close()
-            record('收入與全額代墊可保存還原及匯出，頁面／分頁標題／唯讀網頁／XLSX一致顯示v1.10.0')
+            record('收入與全額代墊可保存還原及匯出，頁面／分頁標題／唯讀網頁／XLSX一致顯示v2.0.1')
 
             # Names are visible at the original costs and the prepaid group-payment row.
             current=state();rent_cost=next(e for e in current['carExpenses'] if e['category']=='rental')

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#263c55">
-<title>旅伴帳本 v1.10.0｜旅遊費用分攤</title>
+<title>旅伴帳本 v2.0.1｜旅遊費用分攤</title>
 <style>
 :root{color-scheme:light;--ink:#24364d;--muted:#5c6b7b;--accent:#b34d2c;--pale:#f7e9df;--paper:#fffdf9;--bg:#f5f1e9;--line:#e3ded5;--amber:#946017;--red:#b23b46;--navy:#263c55;--teal:#256970;--teal-pale:#e8f2ef;--name:156px;--driver:88px;font-family:system-ui,-apple-system,"Noto Sans CJK TC","Microsoft JhengHei",sans-serif}
 
@@ -171,6 +171,7 @@ thead .driver-cell{z-index:5;background:#eae6dc}
 .overview-table .person-index{display:inline;margin-left:5px;font-size:11px}
 .sponsorship-table{min-width:680px;font-size:13px;line-height:1.4}
 .sponsorship-table th,.sponsorship-table td{padding:7px 9px}
+.sponsorship-actions{white-space:nowrap}
 .sponsorship-help{padding:0 16px;font-size:12px;color:var(--muted)}
 .overview-table .due{color:var(--red);font-weight:700}
 .overview-table .receive{color:var(--teal);font-weight:700}
@@ -232,7 +233,7 @@ body{background:white}
 <body>
 <div class="wrap">
   <header class="top">
-    <div class="brand"><div class="brandmark" aria-hidden="true"><svg width="32" height="32" viewBox="0 0 32 32" fill="none"><path d="M27 5 5 13l9 4 4 10L27 5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="m14 17 8-8M5 22l-2 2m7 1-3 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></div><div><div class="eyebrow">一起出發，把帳算清楚</div><h1>旅伴帳本 <span class="app-version" id="app-version">v1.10.0</span></h1><p class="muted">旅遊費用分攤</p></div></div>
+    <div class="brand"><div class="brandmark" aria-hidden="true"><svg width="32" height="32" viewBox="0 0 32 32" fill="none"><path d="M27 5 5 13l9 4 4 10L27 5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="m14 17 8-8M5 22l-2 2m7 1-3 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></div><div><div class="eyebrow">一起出發，把帳算清楚</div><h1>旅伴帳本 <span class="app-version" id="app-version">v2.0.1</span></h1><p class="muted">旅遊費用分攤</p></div></div>
     <div class="top-right"><div class="tools">
       <button type="button" data-action="example">載入範例</button>
       <button type="button" class="primary" data-action="export-sheet">匯出試算表</button>
@@ -257,7 +258,7 @@ body{background:white}
 <script id="trip-core">
 'use strict';
 const TripCore = (() => {
-  const APP_VERSION = '1.10.0';
+  const APP_VERSION = '2.0.1';
   const VERSION = 10;
   const LIMITS = Object.freeze({members:200, family:100, days:100, expenses:100, ledger:5000, sponsorships:100, units:1000000000});
   const CATEGORIES = Object.freeze({breakfast:'早餐', lunch:'午餐', dinner:'晚餐', meal:'餐費', fuel:'油錢', rental:'租車費', parking:'停車費', other:'其他'});
@@ -912,7 +913,7 @@ const TripStorage=Object.freeze({
       <p class="muted tiny">贊助加減＝額外負擔－受惠抵減；只調整各家庭應付，不改旅程支出。還要付＝總應負擔 − 已代墊 − 已繳款 ＋ 已退款；負數列應收回。優惠收入另由團體收取管理，用以抵減分攤及補足退還代墊的款項；不當作任何成員的代墊或已繳款。其他費用含停車費；個人加購與其他加減另列，不重複計算。</p><p class="muted tiny" id="collected-total">主辦人已收款淨額：${money(s.collected)} 元（已繳款 − 已退款）。其他用途加減淨額：${money(s.adjusted)} 元；其他調整只改變個人應付，不列為實際旅程支出。</p>`;
   }
   function renderSponsorships(summary) {
-    return `<section class="panel"><div class="table-caption"><h3>贊助金 · 每個家庭算1組</h3>${readOnly?'':`<button type="button" class="small" data-action="add-sponsorship" ${state.sponsorships.length>=C.LIMITS.sponsorships?'disabled':''}>＋ 新增贊助金</button>`}</div><p class="sponsorship-help">贊助者增加應負擔，勾選的其他家庭等額抵減；不按家庭人數加權。實際交錢後另記「已繳款」，此處不會自動當作已收款或代墊。</p><div class="table-scroll"><table class="sponsorship-table" aria-label="家庭贊助金"><thead><tr><th>用途（點選${readOnly?'查看':'編輯'}）</th><th>贊助者</th><th>願意額外負擔</th><th>受惠家庭</th><th>已套用抵減</th><th>狀態</th></tr></thead><tbody>${state.sponsorships.map(entry=>{const r=summary.sponsorshipResults.find(r=>r.id===entry.id);return `<tr><td style="text-align:left"><button type="button" class="text" data-action="edit-sponsorship" data-sponsorship="${entry.id}">${esc(entry.description||'贊助金')} ↗</button></td><td>${esc(state.members.find(m=>m.id===entry.sponsorId&&C.isNamed(m))?.name||(entry.sponsorId?'原贊助者尚未填姓名':'未指定贊助者'))}</td><td class="money">${r.amountValid?money(r.units):'待修正'}</td><td>${r.groupCount}組</td><td class="money">${money(r.allocated)}</td><td>${r.blocked?'待處理':'已套用 · 交款另記'}</td></tr>`;}).join('')||'<tr><td colspan="6" class="empty">尚無贊助金；需要時再新增。</td></tr>'}</tbody></table></div></section>`;
+    return `<section class="panel"><div class="table-caption"><h3>贊助金 · 每個家庭算1組</h3>${readOnly?'':`<button type="button" class="small" data-action="add-sponsorship" ${state.sponsorships.length>=C.LIMITS.sponsorships?'disabled':''}>＋ 新增贊助金</button>`}</div><p class="sponsorship-help">贊助者增加應負擔，勾選的其他家庭等額抵減；不按家庭人數加權。實際交錢後另記「已繳款」，此處不會自動當作已收款或代墊。</p><div class="table-scroll"><table class="sponsorship-table" aria-label="家庭贊助金"><thead><tr><th>用途（點選${readOnly?'查看':'編輯'}）</th><th>操作</th><th>贊助者</th><th>願意額外負擔</th><th>受惠家庭</th><th>已套用抵減</th><th>狀態</th></tr></thead><tbody>${state.sponsorships.map(entry=>{const r=summary.sponsorshipResults.find(r=>r.id===entry.id);return `<tr><td style="text-align:left"><button type="button" class="text" data-action="edit-sponsorship" data-sponsorship="${entry.id}">${esc(entry.description||'贊助金')} ↗</button></td><td class="sponsorship-actions"><button type="button" class="small" data-action="edit-sponsorship" data-sponsorship="${entry.id}">${readOnly?'查看':'編輯'}</button>${readOnly?'':` <button type="button" class="small danger" data-action="delete-sponsorship" data-sponsorship="${entry.id}" aria-label="刪除贊助金 ${esc(entry.description||'贊助金')}">刪除</button>`}</td><td>${esc(state.members.find(m=>m.id===entry.sponsorId&&C.isNamed(m))?.name||(entry.sponsorId?'原贊助者尚未填姓名':'未指定贊助者'))}</td><td class="money">${r.amountValid?money(r.units):'待修正'}</td><td>${r.groupCount}組</td><td class="money">${money(r.allocated)}</td><td>${r.blocked?'待處理':'已套用 · 交款另記'}</td></tr>`;}).join('')||'<tr><td colspan="7" class="empty">尚無贊助金；需要時再新增。</td></tr>'}</tbody></table></div></section>`;
   }
   function openSponsorship(entryId=null) {
     const original=state.sponsorships.find(e=>e.id===entryId);if(entryId&&!original||!original&&(readOnly||state.sponsorships.length>=C.LIMITS.sponsorships))return;
@@ -947,6 +948,13 @@ const TripStorage=Object.freeze({
     const sponsorships=isNew?[...state.sponsorships,draft]:state.sponsorships.map(e=>e.id===draft.id?draft:e);
     try{const next=C.validateState({...state,sponsorships});state=next;}catch(error){$('sponsorship-issues').hidden=false;$('sponsorship-issues').textContent=error.message;return;}
     closeExpense();commit();
+  }
+  function deleteSponsorship(entryId) {
+    if(readOnly||!state.sponsorships.some(entry=>entry.id===entryId))return false;
+    if(!confirm('確定刪除此筆贊助金與受惠家庭紀錄？各家庭應付將重新計算；已繳款及退款紀錄不會刪除。'))return false;
+    state.sponsorships=state.sponsorships.filter(entry=>entry.id!==entryId);
+    if(sponsorshipEditor?.draft.id===entryId)closeExpense();
+    commit();return true;
   }
   function renderPersonal() {
     const s=C.summarize(state);
@@ -1259,10 +1267,7 @@ const TripStorage=Object.freeze({
     if(action==='sponsorship-all'||action==='sponsorship-none'){
       if(!sponsorshipEditor)return;const e=sponsorshipEditor.draft;e.beneficiaryIds=action==='sponsorship-all'?state.members.filter(m=>C.isNamed(m)&&m.id!==e.sponsorId).map(m=>m.id):[];renderSponsorshipChoices();updateSponsorshipPreview();return;
     }
-    if(action==='delete-sponsorship'){
-      if(!sponsorshipEditor||!confirm('確定刪除此筆贊助金與受惠家庭紀錄？各家庭應付將重新計算；已繳款及退款紀錄不會刪除。'))return;
-      state.sponsorships=state.sponsorships.filter(e=>e.id!==sponsorshipEditor.draft.id);closeExpense();commit();return;
-    }
+    if(action==='delete-sponsorship'){deleteSponsorship(button.dataset.sponsorship||sponsorshipEditor?.draft.id);return;}
     if(action==='add-vehicle'){openVehicle();return;}
     if(action==='edit-vehicle'){openVehicle(button.dataset.vehicle);return;}
     if(action==='open-ride-plan'){openExpense('vehicles',null,true);return;}

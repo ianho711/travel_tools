@@ -86,3 +86,25 @@ test('刪除成員需確認，贊助者移除後保留待處理金額，受惠�
  ctx.confirm=()=>true;vm.runInContext('remove()',ctx);assert.equal(s.members.length,3);assert.equal(s.sponsorships[0].beneficiaryIds.length,2);assert.equal(C.calculateSponsorship(s,s.sponsorships[0]).groupCount,2);
  ctx.button.dataset.person=s.members[0].id;vm.runInContext('remove()',ctx);assert.equal(s.sponsorships[0].sponsorId,null);assert.equal(s.sponsorships[0].amount,'100');assert.equal(sum(s).sponsorshipTotal,0);assert.ok(sum(s).issues.some(i=>i.code==='missing-sponsor'));assert.equal(C.decode(C.encode(s)).sponsorships[0].amount,'100');
 });
+test('列表直接提供每筆贊助的編輯及刪除入口，唯讀列表只可查看',()=>{
+ const s=fixture();const e=gift(s);const code=html.slice(html.indexOf('  function renderSponsorships('),html.indexOf('  function openSponsorship('));
+ const context=vm.createContext({state:s,C,readOnly:false,esc:String,money:n=>(n/10).toFixed(1)});vm.runInContext(code,context);
+ const editable=vm.runInContext('renderSponsorships(C.summarize(state))',context);
+ assert.match(editable,/<th>操作<\/th>/);assert.match(editable,new RegExp('data-action="delete-sponsorship" data-sponsorship="'+e.id+'"'));
+ context.readOnly=true;const readonly=vm.runInContext('renderSponsorships(C.summarize(state))',context);assert.doesNotMatch(readonly,/data-action="delete-sponsorship"/);assert.match(readonly,/>查看<\/button>/);
+});
+test('贊助刪除取消保留原帳與草稿；確認刪除恢復分攤，已繳款退款及其他贊助不變',()=>{
+ const s=fixture();meal(s,'1000');const first=gift(s,'100'),other=gift(s,'200',1,[0,2]);
+ for(const [type,amount,direction] of [['payment','500','minus'],['refund','20','plus']]){const e=C.ledgerEntry(s.members[0].id);Object.assign(e,{type,amount,direction});s.ledger.push(e);}
+ const h=editorHarness(s);h.context.sponsorshipEditor={draft:clone(first),isNew:false};h.context.entryId=first.id;h.context.confirm=()=>false;
+ const original=C.encode(s),draft=JSON.stringify(h.context.sponsorshipEditor);assert.equal(h.run('deleteSponsorship(entryId)'),false);assert.equal(C.encode(h.context.state),original);assert.equal(JSON.stringify(h.context.sponsorshipEditor),draft);assert.equal(h.commits(),0);assert.equal(h.closed(),0);
+ const expected=clone(s);expected.sponsorships=expected.sponsorships.filter(e=>e.id!==first.id);h.context.confirm=()=>true;assert.equal(h.run('deleteSponsorship(entryId)'),true);
+ assert.deepEqual(clone(C.summarize(h.context.state)),clone(C.summarize(expected)));assert.equal(h.context.state.sponsorships[0].id,other.id);assert.equal(h.commits(),1);assert.equal(h.closed(),1);assert.equal(h.context.state.ledger[0].amount,'500');assert.equal(h.context.state.ledger[1].amount,'20');
+ assert.deepEqual(clone(C.decode(C.encode(h.context.state))),clone(expected));
+});
+test('從列表刪除不依賴編輯視窗，不關閉其他草稿；唯讀、重複及未知ID不可刪除',()=>{
+ const s=fixture();const target=gift(s),other=gift(s,'50',1,[0]);const h=editorHarness(s);let prompts=0;h.context.confirm=()=>{prompts++;return true;};h.context.entryId=target.id;
+ h.context.sponsorshipEditor={draft:clone(other),isNew:false};assert.equal(h.run('deleteSponsorship(entryId)'),true);assert.equal(h.closed(),0);assert.equal(h.context.sponsorshipEditor.draft.id,other.id);
+ assert.equal(h.run('deleteSponsorship(entryId)'),false);assert.equal(h.run("deleteSponsorship('unknown')"),false);assert.equal(prompts,1);
+ const ro=editorHarness(s,true);ro.context.confirm=()=>{throw Error('Readonly must not prompt');};ro.context.entryId=other.id;assert.equal(ro.run('deleteSponsorship(entryId)'),false);assert.equal(ro.commits(),0);
+});
