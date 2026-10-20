@@ -25,7 +25,8 @@ const context=vm.createContext({TextEncoder}),C=vm.runInContext(extract(html,'tr
 const originalRaw=fs.readFileSync(input+'/book.json','utf8'),state=C.decode(originalRaw),now=new Date(stamp);
 const originalHTML=fs.readFileSync(input+'/editable.html','utf8'),old=vm.runInNewContext(extract(originalHTML,'trip-core')+';TripCore');
 const before=old.summarize(old.decode(originalRaw)),after=C.summarize(state);
-assert.equal(JSON.stringify(after),JSON.stringify(before),'Original financial results changed');
+function existingFields(value,shape){if(Array.isArray(shape)){assert.equal(value.length,shape.length);return shape.map((item,i)=>existingFields(value[i],item));}if(shape&&typeof shape==='object')return Object.fromEntries(Object.keys(shape).map(key=>[key,existingFields(value[key],shape[key])]));return value;}
+assert.equal(JSON.stringify(existingFields(after,before)),JSON.stringify(before),'Original financial results changed');
 assert.equal(JSON.stringify(C.decode(C.encode(state))),JSON.stringify(state),'JSON round trip');
 const originalView=fs.readFileSync(input+'/readonly.html','utf8'),snapshot=JSON.parse(originalView.match(/<script id="trip-snapshot"[^>]*>([\s\S]*?)<\/script>/)[1]);
 assert.equal(JSON.stringify(C.validateState(snapshot.trip)),JSON.stringify(state),'Original readonly account differs from JSON');
@@ -48,6 +49,8 @@ function bootstrap(page,stored,readonly) {
 // Update shared logic, version labels, the recovery banner and embedded account seed.
 for(const [source,target,readonly] of [[originalHTML,'editable.html',false],[originalView,'readonly.html',true]]){
  let page=source;
+ page=page.replace(/<style>[\s\S]*?<\/style>/,()=>html.match(/<style>[\s\S]*?<\/style>/)[0]);
+ assert.equal(page.match(/<style>[\s\S]*?<\/style>/)[0],html.match(/<style>[\s\S]*?<\/style>/)[0],'Shared style mismatch');
  page=page.replace(/(<title>旅伴帳本 v)[^｜<]+/,()=>'<title>旅伴帳本 v'+C.APP_VERSION);
  page=page.replace(/(<span[^>]*id="app-version"[^>]*>)[^<]*(<\/span>)/,(_all,start,end)=>start+'v'+C.APP_VERSION+end);
  assert.ok(page.includes('<title>旅伴帳本 v'+C.APP_VERSION+'｜'),'Static title version mismatch');
@@ -136,7 +139,8 @@ def main():
         manual=f'''旅伴帳本 v{summary['appVersion']} 修正版（2026-10-20）
 JSON資料格式：version {summary['dataVersion']}，保留原備份相容性。
 
-修正範圍：多分頁修訂衝突保護、車輛費用100筆上限、交通報表明細與小計分離。
+本版新增：按組贊助金、緊湊連續總覽。另保留多分頁衝突保護、車輛100筆上限與交通報表明細／小計分離。
+贊助者增加應負擔，勾選的其他家庭每列算1組抵減，不增加支出、收入或代墊。真正交款後另記已繳款。
 分攤規則與原JSON內容均不變；可編輯版、唯讀快照及Excel含相同帳目。
 原ZIP未修改。此包含私人帳目，請自行選擇分享對象，不要上傳公開GitHub。
 
@@ -147,8 +151,9 @@ JSON資料格式：version {summary['dataVersion']}，保留原備份相容性�
 1. 先備份。在相同檔案／網址開A、B兩頁；A改費用並等候儲存成功，B再改。B應顯示衝突、保留本頁修改且不覆蓋A。B完成視窗儲存到本頁後匯出JSON並確認下載，再按重新載入；若要保留B修改，需比對後手動合併，沒有自動合併。
 2. 車輛超過100筆時應保留視窗草稿，顯示目前筆數及需新增筆數；一般編輯車輛後可正常匯出及還原JSON。
 3. Excel：車資逐日核對G欄、車資每日小計D欄、車資個人小計F欄分別加總應相等。每日交通費G欄與每日交通費小計F欄應相等。各車交通費D欄加總等於交通總計L4。每張表分開核對，各表是相同費用的不同層級，不能把不同表的總額再次相加。
-4. 比較可編輯版、唯讀版、Excel總覽；原帳實際支出{summary['cashExpense']:g}、優惠收入{summary['income']:g}、分攤淨額及已分攤{summary['total']:g}、差額{summary['difference']:g}元。既有瀏覽器若是不同帳本，先備份，再匯入隨附JSON核對。
-5. HTML及Excel版面、按鈕與提示由你確認；自動驗證結果見修正版驗證結果.json。
+4. 此包帳目來自先前上傳的原始ZIP；若瀏覽器已有較新的修改，先匯出目前JSON，再於新版匯入，不要用舊包帳目取代最新帳。比較可編輯版、唯讀版、Excel總覽；原帳實際支出{summary['cashExpense']:g}、優惠收入{summary['income']:g}、分攤淨額及已分攤{summary['total']:g}、差額{summary['difference']:g}元。既有瀏覽器若是不同帳本，先備份，再匯入隨附JSON核對。
+5. 到整趟總覽新增贊助金，選贊助者、填金額，確認自己的家庭禁選、其餘家庭可勾選；儲存後確認贊助者增加負擔、受惠家庭等額抵減。按取消不應更改帳目；交款未記錄前不應增加已繳款。
+6. HTML及Excel版面、按鈕與提示由你確認；自動驗證結果見修正版驗證結果.json。
 '''
         contents[str(parent/'修正版說明與手動確認.txt')]=manual.encode('utf-8-sig')
         # Rename only archive paths; the original JSON bytes remain untouched.

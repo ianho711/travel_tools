@@ -60,6 +60,12 @@ const maxCosts=(n)=>{const s=base(2,1);s.carExpenses=Array.from({length:n},()=>C
 s=maxCosts(98);let boundaryVehicle={id:C.id('v'),name:'上限車輛'};s=C.applyVehicleDraft(s,{vehicle:boundaryVehicle,isNew:true,costs:Object.fromEntries(['rental','fuel'].map(category=>[category,{...C.tripExpense(category),vehicleId:boundaryVehicle.id}]))});add('vehicle_98_add_two_to_100',s);
 s=C.applyVehicleDraft(s,{vehicle:{...boundaryVehicle,name:'100筆修改'},isNew:false,costs:Object.fromEntries(['rental','fuel'].map(category=>[category,s.carExpenses.find(e=>e.vehicleId===boundaryVehicle.id&&e.category===category)]))});add('vehicle_100_edit_without_additions',s);
 s=maxCosts(100);boundaryVehicle={id:C.id('v'),name:'缺少油錢'};s.vehicles.push(boundaryVehicle);s.carExpenses[0].vehicleId=boundaryVehicle.id;const original100=C.encode(s);let rejected=false;try{C.applyVehicleDraft(s,{vehicle:boundaryVehicle,isNew:false,costs:{rental:s.carExpenses[0],fuel:{...C.tripExpense('fuel'),vehicleId:boundaryVehicle.id}}});}catch(error){rejected=/超過100筆/.test(error.message);}if(!rejected||C.encode(s)!==original100)throw Error('Vehicle limit did not preserve original');add('vehicle_100_missing_cost_rejected_original_exportable',s);
+const sponsor=(s,amount,source=0,targets=s.members.map((m,i)=>i).filter(i=>i!==source))=>{const e=C.sponsorship(s.members[source].id,targets.map(i=>s.members[i].id));e.amount=amount;e.description='旅伴贊助 & <備註>';s.sponsorships.push(e);return e;};
+s=base(14,1);s.members[1].count=7;s.members[2].count=2;sponsor(s,'1300');add('sponsorship_thirteen_groups',s);
+s=base(4,1);sponsor(s,'100',0,[3,1,2]);sponsor(s,'200',1,[0,2]);add('sponsorship_multiple_and_remainder',s);
+s=base(3,1);fee(s,0,'breakfast','600',[0,1,2]);sponsor(s,'100');entry(s,0,'payment','100');entry(s,0,'refund','20');add('sponsorship_payments_and_refunds',s);
+s=base(3,1);sponsor(s,'100',0,[]);const missingSponsor=sponsor(s,'100',0,[1]);missingSponsor.sponsorId=null;add('sponsorship_pending_preserves_amount',s);
+s=base(4,1);s.members[1].count=4;s.members[2].excludeTransport=true;s.days[0].useCar=true;s.days[0].drivers=[s.members[1].id];const sponsorRent=pool(s,'5250',[[0,1,2,3]],'rental');sponsorRent.discount='400';sponsorRent.rides[0].halfDayIds=[s.members[3].id];sponsor(s,'200',0,[1,2]);add('sponsorship_transport_unchanged',s);
 fs.writeFileSync(output+'/fixtures.json',JSON.stringify(fixtures));
 '''
 
@@ -99,8 +105,8 @@ def main():
         assert units(ov['J3'].value)==summary['cashExpense']
         assert units(ov['L3'].value)==summary['income']
         assert summary['cashExpense']-summary['income']==summary['total']
-        assert 'v1.9.1' in ov['A1'].value
-        assert wb['使用說明']['B3'].value=='v1.9.1'
+        assert 'v1.10.0' in ov['A1'].value
+        assert wb['使用說明']['B3'].value=='v1.10.0'
         assert units(ov['D3'].value)==summary['allocated']
         assert units(ov['F3'].value)==summary['difference']
         assert ov['H3'].value==len(summary['issues'])
@@ -119,7 +125,29 @@ def main():
             assert settlement.cell(ri,1).value==p['name']
             for ci,key in enumerate(['meals','dailyOther','transport','personal','adjustment','total','advanced','transportAdvanced','paid','refunded','pay','receive'],2):
                 assert units(settlement.cell(ri,ci).value)==(p['daily']-p['meals'] if key=='dailyOther' else p[key])
-            assert p['total']==p['daily']+p['transport']+p['personal']+p['adjustment']
+            assert p['total']==p['daily']+p['transport']+p['personal']+p['adjustment']+p['sponsorshipNet']
+        assert units(ov.cell(7+len(summary['people']),14).value)==0
+        for ri,p in enumerate(summary['people'],4):
+            assert units(ov.cell(ri+3,14).value)==p['sponsorshipNet']
+            for col,key in [(14,'sponsored'),(15,'sponsorshipCredit'),(16,'sponsorshipNet')]:assert units(settlement.cell(ri,col).value)==p[key]
+        sponsors=wb['贊助金'];benefits=wb['贊助分配明細']
+        assert sponsors.max_row==3+len(s['sponsorships'])
+        cursor=4
+        for ri,e in enumerate(s['sponsorships'],4):
+            r=next(r for r in summary['sponsorshipResults'] if r['id']==e['id'])
+            assert sponsors.cell(ri,1).value==e['description']
+            if r['amountValid']:assert units(sponsors.cell(ri,3).value)==r['units']
+            assert sponsors.cell(ri,4).value==r['groupCount'] and units(sponsors.cell(ri,5).value)==r['allocated']
+            credited=0
+            for m in named:
+                assert benefits.cell(cursor,3).value==m['name']
+                assert benefits.cell(cursor,4).value==m['count']
+                assert units(benefits.cell(cursor,6).value)==r['shares'][m['id']]
+                if m['id']==e['sponsorId']:assert benefits.cell(cursor,6).value==0
+                credited+=units(benefits.cell(cursor,6).value);cursor+=1
+            assert credited==r['allocated']
+        assert benefits.max_row==max(3,cursor-1)
+        assert sum(p['sponsorshipNet'] for p in summary['people'])==0
         for di,day in enumerate(s['days'],4):
             assert wb['用車與司機'].cell(di,1).value==day['name']
             assert wb['用車與司機'].cell(di,2).value==('是' if day['useCar'] else '否')
