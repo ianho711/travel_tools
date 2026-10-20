@@ -74,7 +74,10 @@ def main():
             record('每日交通支出預設收合且標示選填，重新整理仍無須設定；租車與油錢只填逐車區')
 
             def state():
-                return json.loads(page.evaluate('(key) => localStorage.getItem(key)', STORE))
+                page.wait_for_function("document.querySelector('#save-status').textContent !== '正在檢查修訂版本並儲存…'")
+                account=json.loads(page.evaluate('(key) => localStorage.getItem(key)', STORE))
+                account.pop('_storageRevision',None)
+                return account
 
             def roster(opened=True):
                 if page.locator('#roster').evaluate('(el) => el.open') != opened:
@@ -672,9 +675,9 @@ def main():
             assert workbook['整趟車資']['C5'].value == 1200
             assert workbook['整趟總覽']['C8'].value == 360
             assert workbook['整趟總覽']['D8'].value == 720
-            assert workbook['車資逐日核對']['H4'].value == 0
-            assert workbook['車資逐日核對']['H7'].value == 120
-            assert workbook['車資逐日核對']['I7'].value == 1
+            assert workbook['車資逐日核對']['G4'].value == 0
+            assert workbook['車資逐日核對']['G7'].value == 120
+            assert workbook['車資個人小計']['D5'].value == 1
             page.reload()
             expect(page.locator('#tab-vehicles')).to_have_attribute('aria-selected', 'true')
             assert state() == before_trip_export
@@ -866,9 +869,9 @@ def main():
             assert fleet_report['各車交通費']['B4'].value == 7000
             assert fleet_report['各車交通費']['C4'].value == 1200
             assert fleet_report['各車交通費']['D4'].value == 8200
-            assert fleet_report['各車交通費']['B7'].value == 18750
-            assert fleet_report['各車交通費']['C7'].value == 3200
-            assert fleet_report['各車交通費']['D7'].value == 21950
+            assert fleet_report['交通總計']['J4'].value == 18750
+            assert fleet_report['交通總計']['K4'].value == 3200
+            assert fleet_report['交通總計']['L4'].value == 21950
             assert fleet_report['整趟總覽']['C10'].value == 0
             assert fleet_report['整趟總覽']['B10'].value == 25
             page.reload()
@@ -1138,9 +1141,9 @@ def main():
             assert report['成員名單']['B4'].value==4 and report['成員名單']['B5'].value==2
             assert report['每餐參與名單']['E4'].value==7
             assert '代表4人' in report['每餐參與名單']['D4'].value
-            assert report['車資逐日核對']['M4'].value==4
-            assert report['車資逐日核對']['N4'].value==16
-            assert report['車資逐日核對']['O4'].value==4
+            assert report['車資逐日核對']['J4'].value==4
+            assert report['車資個人小計']['E4'].value==16
+            assert report['車資逐日核對']['K4'].value==4
             assert report['個人結算']['M4'].value==350
             page.reload();assert state()==family_saved
             bad=json.loads(family_json.read_text());bad['members'][0]['count']=0
@@ -1284,10 +1287,10 @@ def main():
             assert json.loads(half_json.read_text())==half_saved
             with page.expect_download() as info:page.get_by_role('button',name='匯出試算表',exact=True).click()
             half_xlsx=artifacts/'half-day-report.xlsx';info.value.save_as(half_xlsx);report=load_workbook(half_xlsx)
-            rows=[row for row in report['車資逐日核對'].iter_rows(min_row=4,values_only=True) if row[4]=='甲家庭改名']
-            assert sum(row[15]==0.5 for row in rows)==2
-            assert all(row[13]==14 for row in rows)
-            assert all(row[16]==4 for row in rows if row[15]==0.5)
+            rows=[row for row in report['車資逐日核對'].iter_rows(min_row=4,values_only=True) if row[3]=='甲家庭改名']
+            assert sum(row[11]==0.5 for row in rows)==2
+            assert all(row[4]==14 for row in report['車資個人小計'].iter_rows(min_row=4,values_only=True) if row[2]=='甲家庭改名')
+            assert all(row[12]==4 for row in rows if row[11]==0.5)
             assert report['個人結算']['M4'].value==454.3
             page.reload();assert state()==half_saved
             bad=json.loads(half_json.read_text());bad['transportRides'][-1]['halfDayIds']=['unknown']

@@ -56,6 +56,10 @@ s=base(3,2);s.days.forEach(d=>{d.useCar=true;d.drivers=[s.members[0].id];});cons
 s=base(3,1);s.days[0].useCar=true;s.days[0].drivers=[s.members[0].id];const paid5250=pool(s,'5250',[[0,1,2]],'rental');paid5250.discount='400';paid5250.payerId=s.members[1].id;add('actual_advance_5250_income_400',s);
 s=base(2,1);s.members[0].count=7;s.members[1].count=2;fee(s,0,'breakfast','900',[0,1]);const groupMeal=fee(s,0,'lunch','900',[0,1]);groupMeal.splitMode='groups';const groupOther=fee(s,0,'other','100',[0,1]);groupOther.splitMode='groups';add('mixed_people_and_group_fees',s);
 s=base(13,1);const representativeCounts=[7,2,2,1,1,2,1,1,1,1,2,2,1];s.members.forEach((m,i)=>m.count=representativeCounts[i]);const group13=fee(s,0,'lunch','1300',Array.from({length:13},(_,i)=>i));group13.splitMode='groups';add('thirteen_groups_twentyfour_people',s);
+const maxCosts=(n)=>{const s=base(2,1);s.carExpenses=Array.from({length:n},()=>C.tripExpense('rental'));return s;};
+s=maxCosts(98);let boundaryVehicle={id:C.id('v'),name:'上限車輛'};s=C.applyVehicleDraft(s,{vehicle:boundaryVehicle,isNew:true,costs:Object.fromEntries(['rental','fuel'].map(category=>[category,{...C.tripExpense(category),vehicleId:boundaryVehicle.id}]))});add('vehicle_98_add_two_to_100',s);
+s=C.applyVehicleDraft(s,{vehicle:{...boundaryVehicle,name:'100筆修改'},isNew:false,costs:Object.fromEntries(['rental','fuel'].map(category=>[category,s.carExpenses.find(e=>e.vehicleId===boundaryVehicle.id&&e.category===category)]))});add('vehicle_100_edit_without_additions',s);
+s=maxCosts(100);boundaryVehicle={id:C.id('v'),name:'缺少油錢'};s.vehicles.push(boundaryVehicle);s.carExpenses[0].vehicleId=boundaryVehicle.id;const original100=C.encode(s);let rejected=false;try{C.applyVehicleDraft(s,{vehicle:boundaryVehicle,isNew:false,costs:{rental:s.carExpenses[0],fuel:{...C.tripExpense('fuel'),vehicleId:boundaryVehicle.id}}});}catch(error){rejected=/超過100筆/.test(error.message);}if(!rejected||C.encode(s)!==original100)throw Error('Vehicle limit did not preserve original');add('vehicle_100_missing_cost_rejected_original_exportable',s);
 fs.writeFileSync(output+'/fixtures.json',JSON.stringify(fixtures));
 '''
 
@@ -124,8 +128,8 @@ def main():
         assert len(daily_traffic)==len(expected)
         for row,(day,e,member) in zip(daily_traffic,expected):
             r=next(r for r in summary['transport']['expenses'] if r['expenseId']==e['id'])
-            assert row[0]==day['name'] and row[1]==e['name'] and row[4]==member['name']
-            assert units(row[7])==r['shares'][member['id']]
+            assert row[0]==day['name'] and row[1]==e['name'] and row[3]==member['name']
+            assert units(row[6])==r['shares'][member['id']]
         for di,day in enumerate(s['days']):
             sh=wb.worksheets[2+di]
             assert sh.freeze_panes=='B12'
@@ -163,51 +167,69 @@ def main():
         for i,a in enumerate(summary['advances'],4):
             assert advance.cell(i,2).value==a['label']
             assert units(advance.cell(i,3).value)==a['units']
-        pool_sheet=wb['整趟車資'];daily_pool=wb['車資逐日核對']
+        pool_sheet=wb['整趟車資'];daily_pool=wb['車資逐日核對'];day_totals=wb['車資每日小計'];person_totals=wb['車資個人小計']
         assert pool_sheet.max_row==3+len(s['carExpenses'])
-        cursor=4
+        cursor=4;dc=4;pc=4
         for ei,e in enumerate(s['carExpenses'],4):
             result=next(r for r in summary['expenses'] if r['expenseId']==e['id'])
             assert pool_sheet.cell(ei,1).value==e['name']
             assert units(pool_sheet.cell(ei,10).value)==result['advanceUnits']
-            if result['amountValid']:
-                assert units(pool_sheet.cell(ei,3).value)==result['units']
-            else:
-                assert str(pool_sheet.cell(ei,3).value).startswith('待修正')
+            if result['amountValid']:assert units(pool_sheet.cell(ei,3).value)==result['units']
+            else:assert str(pool_sheet.cell(ei,3).value).startswith('待修正')
             if e['category']=='rental':
                 if result['grossValid']:assert units(pool_sheet.cell(ei,7).value)==result['grossUnits']
                 if result['discountValid']:assert units(pool_sheet.cell(ei,8).value)==result['discountUnits']
-                if e['discountNote']:
-                    assert pool_sheet.cell(ei,9).value==e['discountNote']
-                else:
-                    assert pool_sheet.cell(ei,9).value in ('',None)
-            member_sums={m['id']:0 for m in named}
+                if e['discountNote']:assert pool_sheet.cell(ei,9).value==e['discountNote']
+                else:assert pool_sheet.cell(ei,9).value in ('',None)
+            member_sums={m['id']:0 for m in named};subtotal=0
             for day in result['days']:
+                assert day_totals.cell(dc,1).value==e['name'] and day_totals.cell(dc,3).value==day['dayName']
+                assert units(day_totals.cell(dc,4).value)==day['allocated']
+                assert day_totals.cell(dc,5).value==sum(day['personHalfDays'].values())/2
+                assert units(day_totals.cell(dc,7).value)==day['units'] and units(day_totals.cell(dc,8).value)==day['units']-day['allocated']
+                subtotal+=units(day_totals.cell(dc,4).value);dc+=1
                 for m in named:
                     row=list(daily_pool.iter_rows(min_row=cursor,max_row=cursor,values_only=True))[0]
-                    assert row[0]==e['name'] and row[2]==day['dayName'] and row[4]==m['name']
-                    assert units(row[3])==day['units']
-                    assert row[5]==('是' if m['id'] in day['participantIds'] else '否')
-                    assert row[6]==('是' if m['id'] in day['driverIds'] else '否')
-                    assert units(row[7])==day['shares'][m['id']]
-                    assert row[8]==result['billableDays'][m['id']]
-                    assert units(row[9])==result['shares'][m['id']]
-                    assert row[12]==m['count']
-                    assert row[13]==result['billablePersonDays'][m['id']]
-                    assert row[14]==day['billableCounts'][m['id']]
-                    assert row[15]==day['rideHalfDays'][m['id']]/2
-                    assert row[16]==day['personHalfDays'][m['id']]
-                    member_sums[m['id']]+=units(row[7]);cursor+=1
-            assert sum(member_sums.values())==result['allocated']
-        assert daily_pool.max_row==max(3,cursor-1)
-        fleet=wb['各車交通費']
+                    assert row[0]==e['name'] and row[2]==day['dayName'] and row[3]==m['name']
+                    assert row[4]==('是' if m['id'] in day['participantIds'] else '否')
+                    assert row[5]==('是' if m['id'] in day['driverIds'] else '否')
+                    assert units(row[6])==day['shares'][m['id']]
+                    assert row[8]==('是' if m['excludeTransport'] else '否')
+                    assert row[9]==m['count'] and row[10]==day['billableCounts'][m['id']]
+                    assert row[11]==day['rideHalfDays'][m['id']]/2 and row[12]==day['personHalfDays'][m['id']]
+                    member_sums[m['id']]+=units(row[6]);cursor+=1
+            for m in named:
+                row=list(person_totals.iter_rows(min_row=pc,max_row=pc,values_only=True))[0]
+                assert row[0]==e['name'] and row[2]==m['name']
+                assert row[3]==result['billableDays'][m['id']] and row[4]==result['billablePersonDays'][m['id']]
+                assert units(row[5])==result['shares'][m['id']]==member_sums[m['id']];pc+=1
+            assert subtotal==sum(member_sums.values())==result['allocated']
+        assert daily_pool.max_row==max(3,cursor-1) and day_totals.max_row==max(3,dc-1) and person_totals.max_row==max(3,pc-1)
+        # Sum complete monetary data columns: there are no repeated totals or subtotal rows in details.
+        def col_units(sheet,col):return sum(units(row[col-1]) for row in sheet.iter_rows(min_row=4,values_only=True) if len(row)>=col and isinstance(row[col-1],(int,float)))
+        car_allocated=sum(r['allocated'] for r in summary['expenses'] if r['dayId']=='vehicles')
+        assert col_units(daily_pool,7)==col_units(day_totals,4)==col_units(person_totals,6)==car_allocated
+        assert col_units(wb['每日交通費'],7)==col_units(wb['每日交通費小計'],6)==summary['transport']['allocated']-car_allocated
+        assert '此日分配合計（元）' not in [c.value for c in daily_pool[3]]
+        assert '個人本筆合計（元）' not in [c.value for c in daily_pool[3]]
+        fleet=wb['各車交通費'];ts=wb['交通總計']
+        assert fleet.max_row==max(3,3+len(s['vehicles']))
         for vi,v in enumerate(s['vehicles'],4):
             assert fleet.cell(vi,1).value==v['name']
             rent=sum(r['units'] for r in summary['expenses'] if any(e['id']==r['expenseId'] and e['vehicleId']==v['id'] and e['category']=='rental' for e in s['carExpenses']))
             gas=sum(r['units'] for r in summary['expenses'] if any(e['id']==r['expenseId'] and e['vehicleId']==v['id'] and e['category']=='fuel' for e in s['carExpenses']))
-            assert units(fleet.cell(vi,2).value)==rent
-            assert units(fleet.cell(vi,3).value)==gas
-            assert units(fleet.cell(vi,4).value)==rent+gas
+            assert units(fleet.cell(vi,2).value)==rent and units(fleet.cell(vi,3).value)==gas and units(fleet.cell(vi,4).value)==rent+gas
+        assert col_units(fleet,2)==units(ts['J4'].value) and col_units(fleet,3)==units(ts['K4'].value) and col_units(fleet,4)==units(ts['L4'].value)
+        assert units(ts['D4'].value)==summary['transport']['total'] and units(ts['E4'].value)==summary['transport']['allocated']
+        assert units(ts['G4'].value)==summary['transport']['cashExpense'] and units(ts['H4'].value)==summary['transport']['income']
+        assert sum(units(ts.cell(4,c).value) for c in (1,2,3))==summary['transport']['total']
+        expected_daily=[(d,e) for d in s['days'] for e in d['expenses'] if e['category'] in ('fuel','rental','parking')]
+        assert wb['每日交通費小計'].max_row==3+len(expected_daily)
+        for row,(d,e) in zip(wb['每日交通費小計'].iter_rows(min_row=4,values_only=True),expected_daily):
+            result=next(r for r in summary['transport']['expenses'] if r['expenseId']==e['id'])
+            assert row[0]==d['name'] and row[1]==e['name']
+            if result['amountValid']:assert units(row[2])==result['units']
+            assert units(row[5])==result['allocated'] and units(row[6])==result['units']-result['allocated']
         if f['name']=='mixed_people_and_group_fees':
             daily=wb.worksheets[2]
             assert daily['C12'].value==700 and daily['E12'].value==450 and daily['I12'].value==50
@@ -221,12 +243,12 @@ def main():
             assert ov['I8'].value==5250 and wb['個人結算']['H5'].value==5250
             assert wb['整趟車資']['J4'].value==5250 and wb['代墊明細']['C4'].value==5250
         if f['name']=='half_day_full_and_half':
-            assert daily_pool['P5'].value==1 and daily_pool['P6'].value==0.5
-            assert daily_pool['Q5'].value==2 and daily_pool['Q6'].value==1
+            assert daily_pool['L5'].value==1 and daily_pool['L6'].value==0.5
+            assert daily_pool['M5'].value==2 and daily_pool['M6'].value==1
             assert ov['C8'].value==200 and ov['C9'].value==100
         if f['name']=='half_day_family_driver_discount':
             assert ov['D8'].value==350 and ov['D9'].value==300
-            assert daily_pool['N5'].value==3.5 and daily_pool['N6'].value==3
+            assert person_totals['E5'].value==3.5 and person_totals['E6'].value==3
         if f['name']=='rental_discount_vehicle_net_cost':
             assert fleet['B4'].value==6600 and fleet['C4'].value==800 and fleet['D4'].value==7400
             assert fleet['H4'].value==7000 and fleet['I4'].value==400
@@ -236,10 +258,10 @@ def main():
             assert ov['B3'].value==100 and ov['H3'].value>0
             assert '優惠' in wb['待處理項目']['C3'].value
         if f['name']=='three_vehicles_exclude_private_charter':
-            assert fleet['D7'].value==21950
+            assert ts['L4'].value==21950
             assert ov['B10'].value==25 and ov['C10'].value==0 and ov['D10'].value==0
-            excluded_rows=[row for row in daily_pool.iter_rows(min_row=4,values_only=True) if row[4]==s['members'][3]['name']]
-            assert excluded_rows and all(row[8]==0 and row[7]==0 and row[11]=='是' for row in excluded_rows)
+            excluded_rows=[row for row in daily_pool.iter_rows(min_row=4,values_only=True) if row[3]==s['members'][3]['name']]
+            assert excluded_rows and all(row[10]==0 and row[6]==0 and row[8]=='是' for row in excluded_rows)
         if f['name']=='safe_text_and_sheet_names':
             assert ov['A7'].value=='=SUM(1,2)' and ov['A7'].data_type=='s'
         print('PASS:',f['name'],flush=True)
